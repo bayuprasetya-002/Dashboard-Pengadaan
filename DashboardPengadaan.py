@@ -1,12 +1,17 @@
 import base64
 import colorsys
 import html
+import inspect
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import streamlit as st
+
+# Cek library pihak ketiga. Bila ada yang belum terpasang di Python yang
+# sedang menjalankan Streamlit, tampilkan perintah install yang tepat
+# (memakai Python yang sama dengan yang menjalankan aplikasi ini).
 try:
     import gspread
     import pandas as pd
@@ -162,6 +167,10 @@ WAITING_ALIASES = {
 
 # ==================================================
 # GAYA TAMPILAN (CSS)
+#
+# Selector sengaja dibuat ganda (lama + baru) dan memakai !important
+# supaya tampilan tetap sama di berbagai versi Streamlit (lokal maupun
+# Streamlit Community Cloud).
 # ==================================================
 
 st.markdown(
@@ -201,6 +210,16 @@ st.markdown(
     /* Posisi tombol Refresh di sebelah kanan tab.
        Geser angka ini bila ingin menaikkan / menurunkan tombol. */
     --refresh-top: 1rem;
+
+    /* Kunci ke tema terang walau browser/OS memakai mode gelap */
+    color-scheme: light;
+}
+
+html,
+body,
+.stApp,
+[data-testid="stAppViewContainer"] {
+    color-scheme: light;
 }
 
 /* ---------- Latar belakang ---------- */
@@ -337,21 +356,22 @@ st.markdown(
 
 /* ---------- Tombol ---------- */
 .stApp .stButton > button {
-    background: var(--q-primary);
-    border: none;
-    border-radius: 999px;
+    background: var(--q-primary) !important;
+    border: none !important;
+    border-radius: 999px !important;
     font-weight: 700;
     box-shadow: 0 6px 16px rgba(11, 99, 206, 0.30);
 }
 .stApp .stButton > button,
-.stApp .stButton > button p {
+.stApp .stButton > button p,
+.stApp .stButton > button span {
     color: #FFFFFF !important;
 }
 .stApp .stButton > button:hover,
 .stApp .stButton > button:focus,
 .stApp .stButton > button:active {
-    background: var(--q-primary-dark);
-    border: none;
+    background: var(--q-primary-dark) !important;
+    border: none !important;
     color: #FFFFFF !important;
 }
 
@@ -391,35 +411,56 @@ st.markdown(
     line-height: 1;
 }
 
-/* ---------- Tab (bentuk pil) ---------- */
-.stApp .stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
-    border-bottom: none;
+/* ---------- Tab (bentuk pil) ----------
+   Memakai role="tab" / role="tablist" (stabil di semua versi) di samping
+   selector baseweb. Garis bawah & highlight bawaan (merah) disembunyikan,
+   tab aktif menjadi pil biru. */
+.stApp [data-baseweb="tab-list"],
+.stApp [role="tablist"] {
+    gap: 8px !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
 }
-.stApp .stTabs [data-baseweb="tab"] {
-    height: 40px;
-    padding: 0 16px;
-    border-radius: 999px;
-    background: transparent;
+.stApp [data-baseweb="tab-border"],
+.stApp [data-baseweb="tab-highlight"] {
+    display: none !important;
+    height: 0 !important;
+    background: transparent !important;
 }
-.stApp .stTabs [data-baseweb="tab"]:hover {
-    background: rgba(11, 99, 206, 0.08);
+.stApp button[role="tab"],
+.stApp [data-baseweb="tab"] {
+    height: 40px !important;
+    padding: 0 16px !important;
+    border-radius: 999px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
 }
-.stApp .stTabs [data-baseweb="tab"] p {
+.stApp button[role="tab"]:hover,
+.stApp [data-baseweb="tab"]:hover {
+    background: rgba(11, 99, 206, 0.08) !important;
+}
+.stApp button[role="tab"] p,
+.stApp button[role="tab"] span,
+.stApp button[role="tab"] div,
+.stApp [data-baseweb="tab"] p {
     color: var(--q-neutral) !important;
     font-weight: 600;
 }
-.stApp .stTabs [data-baseweb="tab"][aria-selected="true"] {
-    background: var(--q-primary);
-    box-shadow: 0 6px 16px rgba(11, 99, 206, 0.28);
+.stApp button[role="tab"][aria-selected="true"],
+.stApp [data-baseweb="tab"][aria-selected="true"],
+.stApp button[role="tab"][aria-selected="true"]:hover,
+.stApp [data-baseweb="tab"][aria-selected="true"]:hover {
+    background: var(--q-primary) !important;
+    box-shadow: 0 6px 16px rgba(11, 99, 206, 0.28) !important;
 }
-.stApp .stTabs [data-baseweb="tab"][aria-selected="true"] p {
+.stApp button[role="tab"][aria-selected="true"] p,
+.stApp button[role="tab"][aria-selected="true"] span,
+.stApp button[role="tab"][aria-selected="true"] div,
+.stApp [data-baseweb="tab"][aria-selected="true"] p {
     color: #FFFFFF !important;
     font-weight: 700;
-}
-.stApp .stTabs [data-baseweb="tab-highlight"],
-.stApp .stTabs [data-baseweb="tab-border"] {
-    display: none !important;
 }
 
 /* ---------- Filter (input, pilihan, tag) ---------- */
@@ -430,21 +471,27 @@ st.markdown(
 }
 .stApp [data-baseweb="input"],
 .stApp [data-baseweb="select"] > div {
-    background: #FFFFFF;
-    border: 1px solid var(--q-line);
-    border-radius: 10px;
+    background: #FFFFFF !important;
+    background-color: #FFFFFF !important;
+    border: 1px solid var(--q-line) !important;
+    border-radius: 10px !important;
 }
 .stApp [data-baseweb="input"]:focus-within,
 .stApp [data-baseweb="select"] > div:focus-within {
-    border-color: var(--q-primary);
+    border-color: var(--q-primary) !important;
 }
 
-/* Kolom "Cari pengadaan": latar putih (termasuk lapisan dalam input) */
-.stApp [data-baseweb="input"],
+/* Kolom "Cari pengadaan" & pilihan: latar putih (termasuk lapisan dalam) */
 .stApp [data-baseweb="base-input"],
 .stApp [data-baseweb="input"] input,
 .stApp [data-baseweb="base-input"] input,
-.stApp [data-testid="stTextInput"] input {
+.stApp [data-testid="stTextInput"] input,
+.stApp [data-baseweb="select"] input {
+    background: #FFFFFF !important;
+    background-color: #FFFFFF !important;
+}
+.stApp [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+.stApp [data-testid="stMultiSelect"] [data-baseweb="select"] > div {
     background: #FFFFFF !important;
     background-color: #FFFFFF !important;
 }
@@ -462,12 +509,15 @@ st.markdown(
     border-radius: 12px;
 }
 
-/* ---------- Grafik dalam kartu putih ---------- */
+/* ---------- Grafik dalam kartu putih ----------
+   Padding kartu dibuat 0 (jarak diatur lewat margin grafik di Plotly)
+   supaya legenda di bagian bawah tidak terpotong. */
 .stApp [data-testid="stPlotlyChart"] {
     background: #FFFFFF;
     border: 1px solid var(--q-line-soft);
     border-radius: 16px;
-    padding: 12px 14px;
+    padding: 0 !important;
+    overflow: hidden;
     box-shadow: var(--q-glow);
 }
 
@@ -887,6 +937,22 @@ def norm(text):
 def esc(value):
     """Escape HTML. Tanda $ juga diamankan agar tidak dibaca sebagai LaTeX."""
     return html.escape(str(value)).replace("$", "&#36;")
+
+
+def show_chart(fig):
+    """
+    Tampilkan grafik Plotly selebar kolom. Versi Streamlit baru memakai
+    width="stretch", versi lama memakai use_container_width=True.
+    """
+    try:
+        has_width = "width" in inspect.signature(st.plotly_chart).parameters
+    except (TypeError, ValueError):
+        has_width = False
+
+    if has_width:
+        st.plotly_chart(fig, width="stretch")
+    else:
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def get_setting(key, default):
@@ -2365,14 +2431,16 @@ with tab_summary:
         }
     )
 
+    # Margin atas diberi ruang untuk legenda; margin lain sebagai
+    # "padding" kartu putih (padding CSS kartu = 0).
     fig_bar.update_layout(
-        height=440,
+        height=480,
         font=dict(color=BRAND_TEXT),
-        margin=dict(l=0, r=0, t=10, b=0),
+        margin=dict(l=16, r=20, t=56, b=16),
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
+            y=1.0,
             xanchor="left",
             x=0,
             title_text=""
@@ -2385,7 +2453,7 @@ with tab_summary:
     fig_bar.update_yaxes(autorange="reversed")
     fig_bar.update_xaxes(showgrid=True, gridcolor="rgba(15,36,71,0.08)")
 
-    st.plotly_chart(fig_bar, use_container_width=True)
+    show_chart(fig_bar)
 
 
 # --------------------------------------------------
@@ -2630,14 +2698,15 @@ with tab_detail:
                 marker=dict(line=dict(color="#FFFFFF", width=2))
             )
 
+            # Margin bawah dibuat lega (b=72) agar legenda tidak terpotong.
             fig.update_layout(
-                height=330,
+                height=380,
                 font=dict(color=BRAND_TEXT),
-                margin=dict(l=0, r=0, t=10, b=0),
+                margin=dict(l=16, r=16, t=16, b=72),
                 legend=dict(
                     orientation="h",
                     yanchor="top",
-                    y=-0.05,
+                    y=-0.06,
                     xanchor="center",
                     x=0.5,
                     title_text=""
@@ -2654,7 +2723,7 @@ with tab_detail:
                 paper_bgcolor="rgba(0,0,0,0)"
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            show_chart(fig)
 
         with right:
 
