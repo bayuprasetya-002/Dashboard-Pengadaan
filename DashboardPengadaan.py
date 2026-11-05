@@ -822,6 +822,36 @@ li[role="option"][aria-selected="true"] {
     border-radius: 16px;
     box-shadow: var(--q-glow);
 }
+
+/* Scrollbar tabel: selalu terlihat (tidak disembunyikan sistem operasi
+   seperti pada scrollbar "overlay" di Windows/macOS tertentu).
+   Chrome, Edge, Safari memakai ::-webkit-scrollbar; Firefox memakai
+   scrollbar-color (dibungkus @supports agar tidak saling menimpa). */
+.tbl-wrap::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+}
+.tbl-wrap::-webkit-scrollbar-track {
+    background: var(--q-tint);
+}
+.tbl-wrap::-webkit-scrollbar-thumb {
+    background: #8A94A6;
+    border-radius: 999px;
+    border: 3px solid var(--q-tint);
+}
+.tbl-wrap::-webkit-scrollbar-thumb:hover {
+    background: #64748B;
+}
+.tbl-wrap::-webkit-scrollbar-corner {
+    background: var(--q-tint);
+}
+@supports (-moz-appearance: none) {
+    .tbl-wrap {
+        scrollbar-width: auto;
+        scrollbar-color: #8A94A6 var(--q-tint);
+    }
+}
+
 .proc-table {
     width: 100%;
     border-collapse: separate;
@@ -2548,7 +2578,6 @@ with tab_summary:
         barmode="stack",
         color_discrete_map=label_colors,
         category_orders={
-            "Dokumen": doc_labels,
             "Status": [
                 DOC_STATUS_LABEL["Done"],
                 DOC_STATUS_LABEL["On Progress"],
@@ -2561,6 +2590,8 @@ with tab_summary:
     #  - font eksplisit (bukan monospace) dan warna teks navy
     #  - margin kiri lega + automargin agar label tidak terpotong
     #  - label sumbu Y dipecah 2 baris (lihat wrap_label)
+    #  - urutan dokumen: 1 di paling atas sampai 12 di bawah (urutan
+    #    data + autorange="reversed" pada sumbu Y)
     #  - jarak label ke sumbu (ticksuffix) supaya tidak menempel
     #  - sumbu X hanya angka bulat (tanpa 0.5, 1.5, dst.)
     #  - tinggi 560 agar tiap baris punya ruang yang cukup
