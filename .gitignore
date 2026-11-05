@@ -1,0 +1,16 @@
+# Kunci rahasia - JANGAN pernah diunggah ke GitHub
+.streamlit/secrets.toml
+secrets.toml
+*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
