@@ -3,6 +3,7 @@ import colorsys
 import html
 import inspect
 import sys
+import textwrap
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -100,8 +101,14 @@ BRAND_INFO = "#3B82F6"        # Blue
 BRAND_NEUTRAL = "#64748B"     # Gray
 BRAND_TEXT = "#0F2447"        # Teks utama (navy)
 
-# Font grafik (disamakan dengan font Streamlit)
-PLOT_FONT = "Source Sans, Source Sans Pro, Source Sans 3, sans-serif"
+# Font grafik. Daftar font dibuat berlapis dengan fallback sans-serif
+# yang umum ada di semua laptop, supaya tulisan grafik tidak berubah
+# menjadi font monospace (kotak-kotak) bila Source Sans tidak terpasang.
+PLOT_FONT_CSS = (
+    '"Source Sans Pro", "Source Sans 3", "Source Sans", '
+    '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+)
+PLOT_FONT = PLOT_FONT_CSS
 
 COLORS = {
     "Done": BRAND_SUCCESS,
@@ -596,6 +603,15 @@ li[role="option"][aria-selected="true"] {
     padding: 0 !important;
     overflow: hidden;
     box-shadow: var(--q-glow);
+}
+
+/* Font tulisan grafik dipaksa sama di semua laptop (bukan monospace),
+   dan warnanya navy agar mudah dibaca. */
+.stApp [data-testid="stPlotlyChart"] svg text,
+.stApp [data-testid="stPlotlyChart"] .main-svg text {
+    font-family: "Source Sans Pro", "Source Sans 3", "Source Sans",
+                 "Segoe UI", Roboto, "Helvetica Neue", Arial,
+                 sans-serif !important;
 }
 
 /* ---------- Ikon dalam kotak kecil ---------- */
@@ -2082,6 +2098,28 @@ def short_label(text, limit=34):
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+def wrap_label(text, width=36):
+    """
+    Pecah label panjang menjadi beberapa baris (pakai <br>) agar nama
+    dokumen tampil LENGKAP di sumbu grafik, tidak terpotong dan tidak
+    memakai tanda "…". Dipakai untuk label sumbu Y pada grafik Plotly.
+    """
+    lines = textwrap.wrap(
+        str(text),
+        width=width,
+        break_long_words=False,
+        break_on_hyphens=False
+    )
+
+    return "<br>".join(lines) if lines else str(text)
+
+
+def refresh_data():
+    """Hapus cache data lalu muat ulang halaman."""
+    st.cache_data.clear()
+    st.rerun()
+
+
 # ---------- Tabel Daftar Pengadaan (kelengkapan dokumen 1-12) ----------
 
 def doc_status_cell(status, doc_name):
@@ -2199,12 +2237,6 @@ def document_legend_html():
         '{status}'
         '</div>'
     ).format(items=items, status=status)
-
-
-def refresh_data():
-    """Hapus cache data lalu muat ulang halaman."""
-    st.cache_data.clear()
-    st.rerun()
 
 
 # ==================================================
@@ -2488,12 +2520,19 @@ with tab_summary:
         unsafe_allow_html=True
     )
 
+    # Label sumbu Y: nomor + nama dokumen LENGKAP. Nama yang panjang
+    # dipecah menjadi 2 baris (wrap_label) sehingga tidak terpotong.
+    doc_labels = [
+        wrap_label("{}. {}".format(number, doc))
+        for number, doc in enumerate(DOCS, start=1)
+    ]
+
     chart_rows = []
 
-    for number, doc in enumerate(DOCS, start=1):
+    for label, doc in zip(doc_labels, DOCS):
         for status in ["Done", "On Progress", "Pending"]:
             chart_rows.append({
-                "Dokumen": "{}. {}".format(number, short_label(doc)),
+                "Dokumen": label,
                 "Status": DOC_STATUS_LABEL[status],
                 "Jumlah": int((fdf[doc] == status).sum())
             })
@@ -2509,6 +2548,7 @@ with tab_summary:
         barmode="stack",
         color_discrete_map=label_colors,
         category_orders={
+            "Dokumen": doc_labels,
             "Status": [
                 DOC_STATUS_LABEL["Done"],
                 DOC_STATUS_LABEL["On Progress"],
@@ -2517,14 +2557,17 @@ with tab_summary:
         }
     )
 
-    # Margin kiri diberi ruang lega + automargin pada sumbu Y supaya nama
-    # dokumen di kiri tidak terpotong. Lebar tiap entri legenda dikunci
-    # (entrywidth) supaya tulisan "Belum Mulai" tidak terpotong.
-    # Margin atas diberi ruang untuk legenda.
+    # Rapi & konsisten di semua laptop:
+    #  - font eksplisit (bukan monospace) dan warna teks navy
+    #  - margin kiri lega + automargin agar label tidak terpotong
+    #  - label sumbu Y dipecah 2 baris (lihat wrap_label)
+    #  - jarak label ke sumbu (ticksuffix) supaya tidak menempel
+    #  - sumbu X hanya angka bulat (tanpa 0.5, 1.5, dst.)
+    #  - tinggi 560 agar tiap baris punya ruang yang cukup
     fig_bar.update_layout(
-        height=480,
-        font=dict(family=PLOT_FONT, color=BRAND_TEXT),
-        margin=dict(l=28, r=28, t=64, b=24),
+        height=560,
+        font=dict(family=PLOT_FONT, color=BRAND_TEXT, size=13),
+        margin=dict(l=24, r=32, t=64, b=32),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -2532,20 +2575,40 @@ with tab_summary:
             xanchor="left",
             x=0,
             title_text="",
+            font=dict(family=PLOT_FONT, color=BRAND_TEXT, size=13),
             entrywidth=130,
             entrywidthmode="pixels"
         ),
         xaxis_title=None,
         yaxis_title=None,
+        bargap=0.28,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)"
     )
-    fig_bar.update_yaxes(autorange="reversed", automargin=True)
-    fig_bar.update_xaxes(
+
+    fig_bar.update_yaxes(
+        autorange="reversed",
+        automargin=True,
+        ticksuffix="  ",
+        tickfont=dict(family=PLOT_FONT, color=BRAND_TEXT, size=13),
+        showline=True,
+        linecolor="rgba(15,36,71,0.25)"
+    )
+
+    x_axis_options = dict(
         showgrid=True,
         gridcolor="rgba(15,36,71,0.08)",
-        automargin=True
+        automargin=True,
+        rangemode="tozero",
+        tickformat="d",
+        tickfont=dict(family=PLOT_FONT, color=BRAND_TEXT, size=12)
     )
+
+    # Bila jumlah pengadaan sedikit, tampilkan tiap angka bulat
+    if total <= 10:
+        x_axis_options["dtick"] = 1
+
+    fig_bar.update_xaxes(**x_axis_options)
 
     show_chart(fig_bar)
 
