@@ -100,6 +100,9 @@ BRAND_INFO = "#3B82F6"        # Blue
 BRAND_NEUTRAL = "#64748B"     # Gray
 BRAND_TEXT = "#0F2447"        # Teks utama (navy)
 
+# Font grafik (disamakan dengan font Streamlit)
+PLOT_FONT = "Source Sans, Source Sans Pro, Source Sans 3, sans-serif"
+
 COLORS = {
     "Done": BRAND_SUCCESS,
     "On Progress": BRAND_ACCENT2,
@@ -502,6 +505,71 @@ body,
 .stApp span[data-baseweb="tag"] span {
     color: var(--q-primary) !important;
     font-weight: 600;
+}
+
+/* ---------- Teks & ikon filter (terbaca di mode terang & gelap) ----------
+   Di laptop dengan mode gelap, Streamlit memberi warna TERANG pada teks
+   input dan daftar pilihan. Karena latar kolom dipaksa putih, warna teks
+   juga harus dipaksa gelap agar tidak "putih di atas putih". */
+.stApp input,
+.stApp textarea,
+.stApp [data-baseweb="input"] input,
+.stApp [data-baseweb="select"] input,
+.stApp [data-testid="stTextInput"] input {
+    color: var(--q-text) !important;
+    -webkit-text-fill-color: var(--q-text) !important;
+    caret-color: var(--q-primary) !important;
+}
+.stApp input::placeholder,
+.stApp textarea::placeholder {
+    color: #94A3B8 !important;
+    -webkit-text-fill-color: #94A3B8 !important;
+    opacity: 1 !important;
+}
+.stApp [data-baseweb="select"] div,
+.stApp [data-baseweb="select"] span {
+    color: var(--q-text) !important;
+}
+.stApp [data-baseweb="select"] svg {
+    fill: var(--q-text-soft) !important;
+    color: var(--q-text-soft) !important;
+}
+
+/* ---------- Daftar pilihan (dropdown) ----------
+   Dropdown dirender di luar .stApp (langsung di <body>), jadi selector
+   TIDAK boleh diawali .stApp. Dibuat putih dengan teks gelap. */
+[data-baseweb="popover"],
+[data-baseweb="popover"] > div,
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="popover"] ul,
+ul[role="listbox"] {
+    background: #FFFFFF !important;
+    background-color: #FFFFFF !important;
+    color: var(--q-text) !important;
+}
+[data-baseweb="popover"] > div {
+    border: 1px solid var(--q-line) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 10px 28px rgba(15, 36, 71, 0.14) !important;
+}
+[data-baseweb="popover"] div,
+[data-baseweb="popover"] span,
+[data-baseweb="popover"] li,
+[data-baseweb="popover"] li *,
+ul[role="listbox"] li,
+li[role="option"],
+li[role="option"] * {
+    color: var(--q-text) !important;
+}
+[data-baseweb="popover"] li,
+li[role="option"] {
+    background-color: transparent !important;
+}
+[data-baseweb="popover"] li:hover,
+[data-baseweb="popover"] li[aria-selected="true"],
+li[role="option"]:hover,
+li[role="option"][aria-selected="true"] {
+    background-color: var(--q-tint) !important;
 }
 
 /* ---------- Kotak peringatan ---------- */
@@ -945,14 +1013,23 @@ def show_chart(fig):
     width="stretch", versi lama memakai use_container_width=True.
     """
     try:
-        has_width = "width" in inspect.signature(st.plotly_chart).parameters
+        params = inspect.signature(st.plotly_chart).parameters
     except (TypeError, ValueError):
-        has_width = False
+        params = {}
 
-    if has_width:
-        st.plotly_chart(fig, width="stretch")
+    kwargs = {}
+
+    if "width" in params:
+        kwargs["width"] = "stretch"
     else:
-        st.plotly_chart(fig, use_container_width=True)
+        kwargs["use_container_width"] = True
+
+    # theme=None: grafik tidak ikut mode gelap/terang Streamlit, sehingga
+    # tampilannya sama di semua laptop.
+    if "theme" in params:
+        kwargs["theme"] = None
+
+    st.plotly_chart(fig, **kwargs)
 
 
 def get_setting(key, default):
@@ -2435,7 +2512,7 @@ with tab_summary:
     # "padding" kartu putih (padding CSS kartu = 0).
     fig_bar.update_layout(
         height=480,
-        font=dict(color=BRAND_TEXT),
+        font=dict(family=PLOT_FONT, color=BRAND_TEXT),
         margin=dict(l=16, r=20, t=56, b=16),
         legend=dict(
             orientation="h",
@@ -2701,7 +2778,7 @@ with tab_detail:
             # Margin bawah dibuat lega (b=72) agar legenda tidak terpotong.
             fig.update_layout(
                 height=380,
-                font=dict(color=BRAND_TEXT),
+                font=dict(family=PLOT_FONT, color=BRAND_TEXT),
                 margin=dict(l=16, r=16, t=16, b=72),
                 legend=dict(
                     orientation="h",
