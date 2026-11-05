@@ -7,10 +7,6 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import streamlit as st
-
-# Cek library pihak ketiga. Bila ada yang belum terpasang di Python yang
-# sedang menjalankan Streamlit, tampilkan perintah install yang tepat
-# (memakai Python yang sama dengan yang menjalankan aplikasi ini).
 try:
     import gspread
     import pandas as pd
