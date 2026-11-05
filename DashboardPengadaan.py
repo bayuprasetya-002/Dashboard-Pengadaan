@@ -572,9 +572,18 @@ li[role="option"][aria-selected="true"] {
     background-color: var(--q-tint) !important;
 }
 
-/* ---------- Kotak peringatan ---------- */
+/* ---------- Kotak peringatan / info ----------
+   Di laptop dengan mode gelap, teks kotak st.info / st.warning / st.error
+   berwarna TERANG di atas latar yang terang, sehingga tidak terbaca.
+   Teksnya dipaksa gelap (ikon tidak diubah). */
 .stApp [data-testid="stAlert"] {
     border-radius: 12px;
+}
+.stApp [data-testid="stAlert"] [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stAlert"] [data-testid="stMarkdownContainer"] *,
+.stApp [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"] * {
+    color: var(--q-text) !important;
 }
 
 /* ---------- Grafik dalam kartu putih ----------
@@ -2508,27 +2517,35 @@ with tab_summary:
         }
     )
 
-    # Margin atas diberi ruang untuk legenda; margin lain sebagai
-    # "padding" kartu putih (padding CSS kartu = 0).
+    # Margin kiri diberi ruang lega + automargin pada sumbu Y supaya nama
+    # dokumen di kiri tidak terpotong. Lebar tiap entri legenda dikunci
+    # (entrywidth) supaya tulisan "Belum Mulai" tidak terpotong.
+    # Margin atas diberi ruang untuk legenda.
     fig_bar.update_layout(
         height=480,
         font=dict(family=PLOT_FONT, color=BRAND_TEXT),
-        margin=dict(l=16, r=20, t=56, b=16),
+        margin=dict(l=28, r=28, t=64, b=24),
         legend=dict(
             orientation="h",
             yanchor="bottom",
             y=1.0,
             xanchor="left",
             x=0,
-            title_text=""
+            title_text="",
+            entrywidth=130,
+            entrywidthmode="pixels"
         ),
         xaxis_title=None,
         yaxis_title=None,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)"
     )
-    fig_bar.update_yaxes(autorange="reversed")
-    fig_bar.update_xaxes(showgrid=True, gridcolor="rgba(15,36,71,0.08)")
+    fig_bar.update_yaxes(autorange="reversed", automargin=True)
+    fig_bar.update_xaxes(
+        showgrid=True,
+        gridcolor="rgba(15,36,71,0.08)",
+        automargin=True
+    )
 
     show_chart(fig_bar)
 
