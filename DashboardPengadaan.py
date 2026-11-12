@@ -172,7 +172,6 @@ WAITING_ALIASES = {
 }
 
 
-
 MENU_SUMMARY = "📋 Ringkasan"
 MENU_DETAIL = "🔍 Detail Pengadaan"
 MENU_PAYMENT = "💳 Pembayaran Pengadaan"
@@ -1181,13 +1180,25 @@ li[role="option"][aria-selected="true"] {
 }
 
 /* ---------- Tabel Pembayaran: kolom tetap, bulan bisa digeser ----------
-   Hanya kolom tahun/bulan yang bergeser saat di-scroll horizontal.
-   Kolom No, Nama Pengadaan, dan Mulai Pembayaran dikunci di KIRI
-   (sticky left), kolom Progres dikunci di KANAN (sticky right).
-   Lebar kolom tetap dibuat eksplisit supaya posisi "left" tiap kolom
-   tetap akurat. Bila lebar kolom diubah, ubah juga nilai left kolom
-   sesudahnya (s2 = lebar s1, s3 = lebar s1 + s2). */
+   Yang ikut bergeser saat di-scroll horizontal HANYA kolom tahun & bulan.
+   Yang dikunci (tidak bergerak):
+     - KIRI  : No (s1), Nama Pengadaan (s2), Mulai Pembayaran (s3)
+     - KANAN : Progres (s4)
+     - Judul "Pembayaran" (.pay-head-label): tetap terlihat tepat di
+       sebelah kanan kolom kiri yang dikunci, sehingga selalu jelas
+       bahwa deretan tahun/bulan itu adalah kolom pembayaran.
+
+   Semua lebar kolom tetap diatur lewat variabel di bawah, jadi posisi
+   "left" kolom berikutnya selalu ikut akurat. Cukup ubah variabel
+   --pay-w1 .. --pay-w4 bila ingin mengubah lebar kolom. */
 .pay-table {
+    --pay-w1: 44px;     /* No */
+    --pay-w2: 300px;    /* Nama Pengadaan */
+    --pay-w3: 150px;    /* Mulai Pembayaran */
+    --pay-w4: 170px;    /* Progres */
+    --pay-label-left: calc(var(--pay-w1) + var(--pay-w2) + var(--pay-w3));
+    --pay-label-right: var(--pay-w4);
+
     width: max-content;
     min-width: 100%;
 }
@@ -1200,27 +1211,27 @@ li[role="option"][aria-selected="true"] {
 }
 .pay-table .s1 {
     left: 0;
-    width: 44px;
-    min-width: 44px;
-    max-width: 44px;
+    width: var(--pay-w1);
+    min-width: var(--pay-w1);
+    max-width: var(--pay-w1);
 }
 .pay-table .s2 {
-    left: 44px;
-    width: 300px;
-    min-width: 300px;
-    max-width: 300px;
+    left: var(--pay-w1);
+    width: var(--pay-w2);
+    min-width: var(--pay-w2);
+    max-width: var(--pay-w2);
 }
 .pay-table .s3 {
-    left: 344px;
-    width: 150px;
-    min-width: 150px;
-    max-width: 150px;
+    left: calc(var(--pay-w1) + var(--pay-w2));
+    width: var(--pay-w3);
+    min-width: var(--pay-w3);
+    max-width: var(--pay-w3);
 }
 .pay-table .s4 {
     right: 0;
-    width: 170px;
-    min-width: 170px;
-    max-width: 170px;
+    width: var(--pay-w4);
+    min-width: var(--pay-w4);
+    max-width: var(--pay-w4);
 }
 /* Sel isi: di atas sel bulan saat digeser horizontal */
 .pay-table td.s1,
@@ -1246,29 +1257,47 @@ li[role="option"][aria-selected="true"] {
 .pay-table td.s4 {
     border-right: none;
 }
+
+/* Judul "Pembayaran": sel header-nya membentang di atas semua bulan dan
+   ikut bergeser, tetapi tulisan di dalamnya dikunci (sticky) pada area
+   bulan yang terlihat. Lebar tulisan dibuat sama dengan lebar area bulan
+   yang terlihat (lebar tabel dikurangi kolom kiri dan kanan yang
+   dikunci), lalu teksnya di-center. Dengan begitu label selalu berada
+   di TENGAH dan tidak bergeser sedikit pun saat digeser.
+   Lebar area tampil dibaca lewat satuan cqw (container query) dari
+   .tbl-wrap; bila browser belum mendukung, label tetap rata kiri. */
+.tbl-wrap:has(.pay-table) {
+    container-type: inline-size;
+}
+.pay-table th.th-pay {
+    text-align: left;
+    padding: 0;
+}
+.pay-table .pay-head-label {
+    position: sticky;
+    left: var(--pay-label-left);
+    display: block;
+    box-sizing: border-box;
+    width: min(
+        calc(100cqw - var(--pay-label-left) - var(--pay-label-right) - 2px),
+        100%
+    );
+    padding: 0 16px;
+    text-align: center;
+}
+
 /* Kolom bulan: lebar tetap agar tabel melebar & bisa digeser */
 .pay-table td.dc,
 .pay-table thead tr.h3 th {
     min-width: 48px;
 }
 
-/* Layar sempit: kolom tetap dipersempit */
+/* Tablet: kolom tetap dipersempit */
 @media (max-width: 900px) {
-    .pay-table .s2 {
-        width: 170px;
-        min-width: 170px;
-        max-width: 170px;
-    }
-    .pay-table .s3 {
-        left: 214px;
-        width: 110px;
-        min-width: 110px;
-        max-width: 110px;
-    }
-    .pay-table .s4 {
-        width: 130px;
-        min-width: 130px;
-        max-width: 130px;
+    .pay-table {
+        --pay-w2: 170px;
+        --pay-w3: 110px;
+        --pay-w4: 130px;
     }
     .pay-table td.c-name {
         min-width: 0;
@@ -1564,20 +1593,22 @@ li[role="option"][aria-selected="true"] {
 
     /* Tabel Pembayaran: hanya kolom No dan Nama yang dikunci di kiri.
        Kolom Mulai Pembayaran dan Progres ikut bergeser, supaya kolom
-       bulan masih punya ruang di layar sempit. */
+       bulan masih punya ruang di layar sempit. Judul "Pembayaran"
+       dikunci tepat di sebelah kanan kolom Nama. */
+    .pay-table {
+        --pay-w2: 130px;
+        --pay-w3: 120px;
+        --pay-w4: 120px;
+        --pay-label-left: calc(var(--pay-w1) + var(--pay-w2));
+        --pay-label-right: 0px;
+    }
     .pay-table .s2 {
-        width: 130px;
-        min-width: 130px;
-        max-width: 130px;
         box-shadow: 6px 0 8px -6px rgba(15, 36, 71, 0.28);
     }
     .pay-table .s3,
     .pay-table .s4 {
         left: auto;
         right: auto;
-        width: 120px;
-        min-width: 120px;
-        max-width: 120px;
         box-shadow: none;
     }
     .pay-table td.dc,
@@ -3191,14 +3222,15 @@ def parse_payment_sheet(values, grid):
 
     headers = build_headers(values, first, last)
 
-   
+    # Baris tahun biasanya satu baris di atas baris nama bulan, jadi
+    # pemindaian dimulai satu baris lebih awal.
     if month_row is not None:
         scan_first = max(min(first, month_row) - 1, 0)
         months = detect_month_columns(values, scan_first, last)
     else:
         months = []
 
-
+    # Kolom informasi = semua kolom sebelum kolom bulan pertama
     limit = months[0]["col"] if months else len(headers)
     info_headers = headers[:limit]
 
@@ -3420,6 +3452,7 @@ def load_payment_data():
     return parse_payment_sheet(values, grid)
 
 
+# ---------- Filter & kartu ringkasan pembayaran ----------
 
 def render_payment_filters(records, box):
     """Filter khusus pembayaran (ditaruh di wadah `box`). Return (cari, tahun, status)."""
@@ -3588,9 +3621,12 @@ def payment_table_html(records, months):
     Tabel HTML pembayaran dengan header bertingkat:
     Pembayaran -> tahun -> bulan.
 
-    Kolom No, Nama Pengadaan, dan Mulai Pembayaran dikunci di kiri
-    (class s1, s2, s3), kolom Progres dikunci di kanan (class s4).
-    Hanya kolom tahun/bulan yang ikut bergeser saat di-scroll horizontal.
+    Yang dikunci (tidak ikut bergeser saat di-scroll horizontal):
+      - kolom No, Nama Pengadaan, Mulai Pembayaran di kiri (s1, s2, s3)
+      - kolom Progres di kanan (s4)
+      - tulisan "Pembayaran" (.pay-head-label), yang tetap terlihat di
+        sebelah kanan kolom kiri yang dikunci
+    Hanya kolom tahun dan bulan yang bergeser.
     (Di HP, hanya No dan Nama yang dikunci; lihat blok RESPONSIF di CSS.)
     """
     year_groups = []
@@ -3606,7 +3642,9 @@ def payment_table_html(records, months):
         '<th rowspan="3" class="s1">No</th>'
         '<th rowspan="3" class="th-left s2">Nama Pengadaan</th>'
         '<th rowspan="3" class="s3">Mulai Pembayaran</th>'
-        '<th colspan="{count}">Pembayaran</th>'
+        '<th colspan="{count}" class="th-pay">'
+        '<span class="pay-head-label">Pembayaran</span>'
+        '</th>'
         '<th rowspan="3" class="s4">Progres</th>'
         '</tr>'
     ).format(count=len(months))
@@ -3693,7 +3731,6 @@ def render_payment_list(shown, months):
     )
 
     st.markdown(payment_legend_html(), unsafe_allow_html=True)
-
 
 
 # ---------- Detail Pembayaran Pengadaan ----------
@@ -3947,24 +3984,31 @@ def render_payment_detail_page(shown):
         render_payment_detail(shown[labels.index(selected)])
 
 
-
+# ==================================================
+# TATA LETAK HALAMAN
+# ==================================================
 
 st.markdown(
     header_html(datetime.now(WIB).strftime("%d %b %Y, %H:%M")),
     unsafe_allow_html=True
 )
 
-
+# Wadah dibuat berurutan agar letaknya tetap: pemberitahuan, filter, kartu,
+# lalu menu. Isinya diisi belakangan sesuai menu yang aktif.
 notice_box = st.container()
 filters_box = st.container()
 kpi_box = st.container()
 nav_box = st.container()
 
-
+# Menu dirender PERTAMA (sebelum data dibaca) supaya tidak hilang walau
+# pembacaan data gagal / st.stop().
 with nav_box:
     menu = render_nav()
 
 
+# ==================================================
+# MENU PEMBAYARAN (Pembayaran Pengadaan & Detail Pembayaran)
+# ==================================================
 
 if menu in PAYMENT_MENUS:
 
@@ -4160,6 +4204,9 @@ if fdf.empty:
     st.stop()
 
 
+# ==================================================
+# KARTU RINGKASAN (KPI)
+# ==================================================
 
 total = len(fdf)
 total_docs = total * len(DOCS)
@@ -4264,7 +4311,6 @@ if menu == MENU_SUMMARY:
         unsafe_allow_html=True
     )
 
-   
     doc_labels = [
         wrap_label("{}. {}".format(number, doc))
         for number, doc in enumerate(DOCS, start=1)
@@ -4299,7 +4345,8 @@ if menu == MENU_SUMMARY:
         }
     )
 
-   
+    # Legenda di atas grafik (di luar area batang) dan margin kiri otomatis
+    # (automargin) agar nama dokumen yang panjang tidak terpotong.
     fig_bar.update_layout(
         height=560,
         font=dict(family=PLOT_FONT, color=BRAND_TEXT, size=13),
