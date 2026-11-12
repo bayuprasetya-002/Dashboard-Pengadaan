@@ -2,6 +2,7 @@ import base64
 import colorsys
 import html
 import inspect
+import re
 import sys
 import textwrap
 import time
@@ -10,9 +11,7 @@ from pathlib import Path
 
 import streamlit as st
 
-# Cek library pihak ketiga. Bila ada yang belum terpasang di Python yang
-# sedang menjalankan Streamlit, tampilkan perintah install yang tepat
-# (memakai Python yang sama dengan yang menjalankan aplikasi ini).
+
 try:
     import gspread
     import pandas as pd
@@ -101,9 +100,7 @@ BRAND_INFO = "#3B82F6"        # Blue
 BRAND_NEUTRAL = "#64748B"     # Gray
 BRAND_TEXT = "#0F2447"        # Teks utama (navy)
 
-# Font grafik. Daftar font dibuat berlapis dengan fallback sans-serif
-# yang umum ada di semua laptop, supaya tulisan grafik tidak berubah
-# menjadi font monospace (kotak-kotak) bila Source Sans tidak terpasang.
+
 PLOT_FONT_CSS = (
     '"Source Sans Pro", "Source Sans 3", "Source Sans", '
     '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
@@ -175,6 +172,68 @@ WAITING_ALIASES = {
 }
 
 
+
+MENU_SUMMARY = "📋 Ringkasan"
+MENU_DETAIL = "🔍 Detail Pengadaan"
+MENU_PAYMENT = "💳 Pembayaran Pengadaan"
+MENU_PAY_DETAIL = "🧾 Detail Pembayaran"
+
+MENU_ITEMS = [MENU_SUMMARY, MENU_DETAIL, MENU_PAYMENT, MENU_PAY_DETAIL]
+PAYMENT_MENUS = (MENU_PAYMENT, MENU_PAY_DETAIL)
+MENU_KEY = "menu_nav"
+
+
+# ==================================================
+# KONFIGURASI PEMBAYARAN PENGADAAN
+# ==================================================
+
+# Nama bulan (bahasa Indonesia) urutan 1-12 dan singkatannya.
+MONTH_NAMES = [
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+]
+MONTH_ABBR = [
+    "Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
+    "Jul", "Agu", "Sep", "Okt", "Nov", "Des"
+]
+
+# Nama bulan di header sheet -> nomor bulan (huruf kecil, tanpa spasi).
+# Singkatan 3 huruf ikut diterima (mis. "Agu", "Okt").
+MONTH_LOOKUP = {}
+for _index, _name in enumerate(MONTH_NAMES, start=1):
+    MONTH_LOOKUP[_name.lower()] = _index
+    MONTH_LOOKUP[_name[:3].lower()] = _index
+MONTH_LOOKUP["sept"] = 9
+
+# Worksheet pembayaran (spreadsheet yang sama dengan data pengadaan).
+# Ubah lewat secrets: [google_sheet] payment_worksheet_name = "Sheet2"
+PAY_SHEET_DEFAULT = "Sheet2"
+
+# Hanya pengadaan dengan kolom Status = "Running" yang ditampilkan.
+PAY_RUNNING_STATUS = "running"
+
+# Nama tampilan status per cicilan (berdasarkan warna sel di spreadsheet)
+#   Hijau  -> Done        (dibayar)
+#   Kuning -> On Progress (sedang diproses)
+#   Putih  -> Pending     (belum mulai)
+PAY_STATUS_LABEL = {
+    "Done": "Dibayar",
+    "On Progress": "Diproses",
+    "Pending": "Belum Mulai",
+}
+
+# Nama kolom informasi di sheet pembayaran (spasi/huruf besar diabaikan)
+PAY_COLUMN_ALIASES = {
+    "No": ["No", "No.", "Nomor"],
+    "Jenis": ["Jenis"],
+    "Nama": ["Project", "Nama Pengadaan", "Nama Project"],
+    "SPK": ["Tanggal SPK"],
+    "Nilai": ["Nilai Pengadaan"],
+    "Status": ["Status"],
+    "Durasi": ["Durasi (Bulan)", "Durasi"],
+}
+
+
 # ==================================================
 # GAYA TAMPILAN (CSS)
 #
@@ -214,10 +273,11 @@ st.markdown(
               0 1px 3px rgba(15, 36, 71, 0.06);
 
     /* Tinggi logo di header (BRI & DWI). Ubah bila ingin lebih
-       besar / kecil. */
+       besar / kecil. Nilai ini otomatis mengecil di layar sempit
+       (lihat blok RESPONSIF di bagian bawah CSS). */
     --logo-height: 64px;
 
-    /* Posisi tombol Refresh di sebelah kanan tab.
+    /* Posisi tombol Refresh di sebelah kanan menu.
        Geser angka ini bila ingin menaikkan / menurunkan tombol. */
     --refresh-top: 1rem;
 
@@ -230,6 +290,12 @@ body,
 .stApp,
 [data-testid="stAppViewContainer"] {
     color-scheme: light;
+}
+
+/* Cegah browser HP memperbesar teks sendiri saat layar diputar */
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
 }
 
 /* ---------- Latar belakang ---------- */
@@ -385,11 +451,12 @@ body,
     color: #FFFFFF !important;
 }
 
-/* ---------- Tombol Refresh (sejajar dengan tab, di kanan) ----------
+/* ---------- Tombol Refresh (sejajar dengan menu, di kanan) ----------
    Wadah tombol dibuat selebar penuh dan setinggi 0, lalu tombolnya
-   diposisikan absolut di sisi KANAN baris tab. Lebar penuh wajib agar
+   diposisikan absolut di sisi KANAN baris menu. Lebar penuh wajib agar
    "right: 0" menempel ke tepi kanan halaman (bukan ke tepi kiri).
-   Ukuran disamakan dengan tab (tinggi 40px, padding 0 16px, pil). */
+   Ukuran disamakan dengan menu (tinggi 40px, padding 0 16px, pil).
+   Di layar sempit tombol dipindah ke atas menu (lihat blok RESPONSIF). */
 .stApp .st-key-refresh_btn {
     position: relative !important;
     width: 100% !important;
@@ -469,6 +536,59 @@ body,
 .stApp button[role="tab"][aria-selected="true"] span,
 .stApp button[role="tab"][aria-selected="true"] div,
 .stApp [data-baseweb="tab"][aria-selected="true"] p {
+    color: #FFFFFF !important;
+    font-weight: 700;
+}
+
+/* ---------- Menu utama (pil) ----------
+   Menu memakai st.radio horizontal (key "menu_nav") agar filter dan
+   kartu di atasnya bisa mengikuti menu yang aktif. Tampilannya dibuat
+   sama dengan tab pil: lingkaran radio disembunyikan, pilihan aktif
+   menjadi pil biru. */
+.stApp .st-key-menu_nav [role="radiogroup"] {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center;
+    gap: 8px !important;
+    background: transparent !important;
+}
+.stApp .st-key-menu_nav label[data-baseweb="radio"] {
+    height: 40px;
+    margin: 0 !important;
+    padding: 0 16px !important;
+    border-radius: 999px;
+    background: transparent !important;
+    display: flex !important;
+    align-items: center;
+    cursor: pointer;
+    box-shadow: none;
+}
+/* Sembunyikan lingkaran radio (semua anak langsung selain teks) */
+.stApp .st-key-menu_nav label[data-baseweb="radio"] > div:not(:has([data-testid="stMarkdownContainer"])),
+.stApp .st-key-menu_nav label[data-baseweb="radio"] > span {
+    display: none !important;
+}
+.stApp .st-key-menu_nav label[data-baseweb="radio"] > div {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+.stApp .st-key-menu_nav label[data-baseweb="radio"]:hover {
+    background: rgba(11, 99, 206, 0.08) !important;
+}
+.stApp .st-key-menu_nav label[data-baseweb="radio"] p,
+.stApp .st-key-menu_nav label[data-baseweb="radio"] div {
+    color: var(--q-neutral) !important;
+    font-weight: 600;
+    margin: 0;
+}
+.stApp .st-key-menu_nav label[data-baseweb="radio"]:has(input:checked),
+.stApp .st-key-menu_nav label[data-baseweb="radio"]:has(input:checked):hover {
+    background: var(--q-primary) !important;
+    box-shadow: 0 6px 16px rgba(11, 99, 206, 0.28);
+}
+.stApp .st-key-menu_nav label[data-baseweb="radio"]:has(input:checked) p,
+.stApp .st-key-menu_nav label[data-baseweb="radio"]:has(input:checked) div {
     color: #FFFFFF !important;
     font-weight: 700;
 }
@@ -673,6 +793,7 @@ li[role="option"][aria-selected="true"] {
     line-height: 1.2;
     color: var(--q-navy);
     margin-top: 8px;
+    overflow-wrap: anywhere;
 }
 .kpi .sub {
     font-size: 0.78rem;
@@ -769,7 +890,7 @@ li[role="option"][aria-selected="true"] {
 /* ---------- Kartu dokumen ---------- */
 .doc-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr));
     gap: 12px;
 }
 .doc-card {
@@ -997,7 +1118,7 @@ li[role="option"][aria-selected="true"] {
 }
 .legend-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
     gap: 10px 20px;
 }
 .legend-item {
@@ -1037,6 +1158,458 @@ li[role="option"][aria-selected="true"] {
     display: inline-flex;
     align-items: center;
     gap: 8px;
+}
+
+/* ---------- Pembayaran Pengadaan ---------- */
+.proc-table thead tr.h3 th { top: 70px; height: 32px; padding: 0 4px; }
+.proc-table td.c-start {
+    white-space: nowrap;
+    text-align: center;
+    color: var(--q-text-soft);
+    font-weight: 600;
+}
+.doc-meta {
+    font-size: 0.8rem;
+    color: var(--q-text-soft);
+    line-height: 1.4;
+    margin-bottom: 4px;
+}
+.legend-status.solo {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+/* ---------- Tabel Pembayaran: kolom tetap, bulan bisa digeser ----------
+   Hanya kolom tahun/bulan yang bergeser saat di-scroll horizontal.
+   Kolom No, Nama Pengadaan, dan Mulai Pembayaran dikunci di KIRI
+   (sticky left), kolom Progres dikunci di KANAN (sticky right).
+   Lebar kolom tetap dibuat eksplisit supaya posisi "left" tiap kolom
+   tetap akurat. Bila lebar kolom diubah, ubah juga nilai left kolom
+   sesudahnya (s2 = lebar s1, s3 = lebar s1 + s2). */
+.pay-table {
+    width: max-content;
+    min-width: 100%;
+}
+.pay-table .s1,
+.pay-table .s2,
+.pay-table .s3,
+.pay-table .s4 {
+    position: sticky;
+    box-sizing: border-box;
+}
+.pay-table .s1 {
+    left: 0;
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+}
+.pay-table .s2 {
+    left: 44px;
+    width: 300px;
+    min-width: 300px;
+    max-width: 300px;
+}
+.pay-table .s3 {
+    left: 344px;
+    width: 150px;
+    min-width: 150px;
+    max-width: 150px;
+}
+.pay-table .s4 {
+    right: 0;
+    width: 170px;
+    min-width: 170px;
+    max-width: 170px;
+}
+/* Sel isi: di atas sel bulan saat digeser horizontal */
+.pay-table td.s1,
+.pay-table td.s2,
+.pay-table td.s3,
+.pay-table td.s4 {
+    z-index: 3;
+}
+/* Sel header kolom tetap: di atas semua header lain */
+.pay-table th.s1,
+.pay-table th.s2,
+.pay-table th.s3,
+.pay-table th.s4 {
+    z-index: 6;
+}
+/* Garis bayangan pemisah antara kolom tetap dan kolom yang bergeser */
+.pay-table .s3 {
+    box-shadow: 6px 0 8px -6px rgba(15, 36, 71, 0.28);
+}
+.pay-table .s4 {
+    box-shadow: -6px 0 8px -6px rgba(15, 36, 71, 0.28);
+}
+.pay-table td.s4 {
+    border-right: none;
+}
+/* Kolom bulan: lebar tetap agar tabel melebar & bisa digeser */
+.pay-table td.dc,
+.pay-table thead tr.h3 th {
+    min-width: 48px;
+}
+
+/* Layar sempit: kolom tetap dipersempit */
+@media (max-width: 900px) {
+    .pay-table .s2 {
+        width: 170px;
+        min-width: 170px;
+        max-width: 170px;
+    }
+    .pay-table .s3 {
+        left: 214px;
+        width: 110px;
+        min-width: 110px;
+        max-width: 110px;
+    }
+    .pay-table .s4 {
+        width: 130px;
+        min-width: 130px;
+        max-width: 130px;
+    }
+    .pay-table td.c-name {
+        min-width: 0;
+    }
+}
+
+/* ---------- Detail Pembayaran: jadwal per bulan ----------
+   Jumlah kolom (--cols) diatur dari Python mengikuti jumlah cicilan:
+   4 cicilan -> 4 kolom (1 baris), 6 cicilan -> 3 kolom (2 baris), dst.
+   Semua kartu sama tinggi dan isinya seragam. */
+.pay-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 14px 0;
+}
+.pay-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+    gap: 14px;
+}
+@media (max-width: 900px) {
+    .pay-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+@media (max-width: 560px) {
+    .pay-grid {
+        grid-template-columns: 1fr;
+    }
+}
+.pay-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+    background: #FFFFFF;
+    border: 1px solid var(--q-line-soft);
+    border-top: 4px solid var(--pay-accent, var(--q-pending));
+    border-radius: 16px;
+    padding: 14px 16px 16px 16px;
+    box-shadow: var(--q-glow);
+}
+.pay-card.done     { --pay-accent: var(--q-success); }
+.pay-card.progress { --pay-accent: var(--q-accent); }
+.pay-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+.pay-no {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(100, 116, 139, 0.14);
+    color: #475569;
+}
+.pay-card.done .pay-no     { background: rgba(34, 197, 94, 0.14);  color: #15803D; }
+.pay-card.progress .pay-no { background: rgba(245, 158, 11, 0.16); color: #B45309; }
+.pay-month {
+    font-size: 0.95rem;
+    font-weight: 800;
+    color: var(--q-navy);
+    line-height: 1.25;
+}
+.pay-amount {
+    font-size: 1.3rem;
+    font-weight: 800;
+    line-height: 1.2;
+    color: var(--q-navy);
+    overflow-wrap: anywhere;
+}
+.pay-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.pay-meta-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--q-muted);
+}
+.pay-meta-value {
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--q-text-soft);
+}
+.pay-foot {
+    margin-top: auto;
+}
+
+/* ==================================================
+   RESPONSIF — laptop (berbagai resolusi / zoom), tablet, dan HP
+   Blok ini sengaja diletakkan PALING AKHIR agar menimpa aturan di
+   atasnya. Breakpoint:
+     >= 1800px : layar lebar
+     <= 1280px : laptop kecil
+     <= 1100px : tombol Refresh pindah ke atas menu
+     <=  900px : tablet (kartu & filter 2 per baris)
+     <=  640px : HP (1 kolom, tabel lebih padat)
+     <=  480px : HP kecil
+   ================================================== */
+
+/* ---------- Ukuran teks fleksibel (mengikuti lebar layar) ---------- */
+.app-title-text {
+    font-size: clamp(1.25rem, 1rem + 1.2vw, 1.9rem);
+}
+.kpi .value {
+    font-size: clamp(1.35rem, 1.05rem + 0.9vw, 1.9rem);
+}
+.kpi-wide .value {
+    font-size: clamp(1.25rem, 1rem + 0.8vw, 1.7rem);
+}
+.pay-amount {
+    font-size: clamp(1.1rem, 1rem + 0.5vw, 1.3rem);
+}
+
+/* Isi kartu boleh menyusut & membungkus (tidak mendorong kartu melebar) */
+.info-card > div:last-child,
+.doc-card > div:last-child {
+    min-width: 0;
+}
+.info-card .value {
+    overflow-wrap: anywhere;
+}
+.kpi .label span {
+    min-width: 0;
+}
+
+/* Tabel: tinggi mengikuti tinggi layar, geser sentuh terasa halus */
+.tbl-wrap {
+    max-height: min(640px, 80vh);
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ---------- Layar lebar ---------- */
+@media (min-width: 1800px) {
+    .block-container {
+        max-width: 1600px;
+    }
+}
+
+/* ---------- Laptop kecil ---------- */
+@media (max-width: 1280px) {
+    :root {
+        --logo-height: 56px;
+    }
+    .block-container {
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+    }
+    .app-header {
+        margin-bottom: 3rem;
+    }
+}
+
+/* ---------- Tombol Refresh pindah ke atas menu ----------
+   Bila layar tidak cukup lebar untuk menu + tombol dalam satu baris,
+   tombol tidak lagi melayang di kanan menu (supaya tidak menimpa menu)
+   melainkan tampil di atas menu. */
+@media (max-width: 1100px) {
+    .stApp .st-key-refresh_btn {
+        height: auto !important;
+        min-height: 0 !important;
+        margin-bottom: 0.6rem;
+    }
+    .stApp .st-key-refresh_btn button {
+        position: static !important;
+        width: 100% !important;
+    }
+}
+
+/* ---------- Tablet ---------- */
+@media (max-width: 900px) {
+    /* Kolom Streamlit (kartu KPI, filter, dsb.) membungkus 2 per baris */
+    .stApp [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+        row-gap: 1rem !important;
+    }
+    .stApp [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+    .stApp [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        flex: 1 1 calc(50% - 1rem) !important;
+        min-width: calc(50% - 1rem) !important;
+        width: auto !important;
+    }
+    .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+}
+
+/* ---------- HP ---------- */
+@media (max-width: 640px) {
+    :root {
+        --logo-height: 44px;
+    }
+
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 2rem !important;
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+    }
+
+    /* Semua kolom Streamlit menjadi 1 per baris */
+    .stApp [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+    .stApp [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+    }
+
+    .app-header {
+        gap: 12px;
+        margin-bottom: 1.5rem;
+    }
+    .app-logo {
+        max-width: 150px;
+    }
+    .app-subtitle {
+        font-size: 0.75rem;
+        line-height: 1.4;
+    }
+
+    /* Menu pil lebih ringkas */
+    .stApp .st-key-menu_nav [role="radiogroup"] {
+        gap: 6px !important;
+    }
+    .stApp .st-key-menu_nav label[data-baseweb="radio"] {
+        height: 36px;
+        padding: 0 12px !important;
+    }
+    .stApp .st-key-menu_nav label[data-baseweb="radio"] p,
+    .stApp .st-key-menu_nav label[data-baseweb="radio"] div {
+        font-size: 0.82rem;
+    }
+
+    /* Kartu lebih padat */
+    .kpi {
+        padding: 12px 14px;
+    }
+    .kpi .label {
+        font-size: 0.68rem;
+    }
+    .kpi-wide {
+        gap: 12px;
+    }
+    .big-icon {
+        width: 44px;
+        height: 44px;
+    }
+    .info-card {
+        padding: 10px 12px;
+    }
+    .doc-card {
+        padding: 10px 12px;
+    }
+    .legend-box {
+        padding: 14px 14px;
+    }
+    .section-title {
+        font-size: 1.05rem;
+    }
+
+    /* Tabel lebih padat; geser horizontal tetap dipakai */
+    .tbl-wrap {
+        max-height: 75vh;
+        border-radius: 12px;
+    }
+    .proc-table {
+        font-size: 0.78rem;
+    }
+    .proc-table td {
+        padding: 7px 8px;
+    }
+    .proc-table td.c-name {
+        min-width: 210px;
+    }
+    .proc-table td.c-prog {
+        min-width: 120px;
+    }
+    .proc-table th {
+        padding: 0 8px;
+    }
+
+    /* Tabel Pembayaran: hanya kolom No dan Nama yang dikunci di kiri.
+       Kolom Mulai Pembayaran dan Progres ikut bergeser, supaya kolom
+       bulan masih punya ruang di layar sempit. */
+    .pay-table .s2 {
+        width: 130px;
+        min-width: 130px;
+        max-width: 130px;
+        box-shadow: 6px 0 8px -6px rgba(15, 36, 71, 0.28);
+    }
+    .pay-table .s3,
+    .pay-table .s4 {
+        left: auto;
+        right: auto;
+        width: 120px;
+        min-width: 120px;
+        max-width: 120px;
+        box-shadow: none;
+    }
+    .pay-table td.dc,
+    .pay-table thead tr.h3 th {
+        min-width: 44px;
+    }
+
+    /* Grafik batang: boleh digeser horizontal agar label tidak sesak.
+       Wadahnya diberi key "chart_docs" lewat Python. */
+    .stApp .st-key-chart_docs [data-testid="stPlotlyChart"] {
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+    }
+    .stApp .st-key-chart_docs [data-testid="stPlotlyChart"] > div {
+        min-width: 560px;
+    }
+}
+
+/* ---------- HP kecil ---------- */
+@media (max-width: 480px) {
+    :root {
+        --logo-height: 38px;
+    }
+    .app-logo {
+        max-width: 130px;
+    }
+    .app-title-text {
+        font-size: 1.15rem;
+    }
+    .pay-card {
+        padding: 12px 14px 14px 14px;
+    }
 }
 </style>
 """,
@@ -1084,7 +1657,24 @@ def show_chart(fig):
     if "theme" in params:
         kwargs["theme"] = None
 
+    # Toolbar Plotly disembunyikan: di layar sentuh toolbar ini menutupi
+    # grafik dan mengganggu geseran halaman.
+    if "config" in params:
+        kwargs["config"] = {"displayModeBar": False}
+
     st.plotly_chart(fig, **kwargs)
+
+
+def keyed_container(key):
+    """
+    Wadah dengan key (jadi class CSS "st-key-<key>"). Bila versi Streamlit
+    belum mendukung parameter key, dipakai wadah biasa (tampilan tetap
+    jalan, hanya tanpa geser horizontal grafik di HP).
+    """
+    try:
+        return st.container(key=key)
+    except TypeError:
+        return st.container()
 
 
 def get_setting(key, default):
@@ -1822,14 +2412,6 @@ def load_data():
             .replace({"": "-", "nan": "-", "None": "-"})
         )
 
-    # ----------------------------------------------
-    # HITUNG JUMLAH DOKUMEN PER STATUS (dari warna dokumen 1-12)
-    #
-    #   Done        : jumlah dokumen berwarna hijau  -> "Selesai"
-    #   On Progress : jumlah dokumen berwarna kuning -> "Berjalan"
-    #   Pending     : jumlah dokumen berwarna putih  -> "Belum Mulai"
-    # ----------------------------------------------
-
     df["Done"] = df[DOCS].eq("Done").sum(axis=1).astype(int)
     df["On Progress"] = df[DOCS].eq("On Progress").sum(axis=1).astype(int)
     df["Pending"] = df[DOCS].eq("Pending").sum(axis=1).astype(int)
@@ -1962,6 +2544,8 @@ ICON_PATHS = {
     "hourglass": '<path d="M7 3h10M7 21h10M8 3v4l4 5-4 5v4M16 3v4l-4 5 4 5v4"/>',
     "timer": '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/>',
     "bars": '<path d="M5 20v-8M12 20V4M19 20v-5"/>',
+    "card": '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
+    "coin": '<circle cx="12" cy="12" r="9"/><path d="M14.5 9.5c-.5-1-1.5-1.5-2.5-1.5-1.5 0-2.5.8-2.5 2s1 1.7 2.5 2 2.5.8 2.5 2-1 2-2.5 2c-1 0-2-.5-2.5-1.5M12 6.5V8m0 8v1.5"/>',
 }
 
 
@@ -2145,9 +2729,64 @@ def wrap_label(text, width=36):
 
 
 def refresh_data():
-    """Hapus cache data lalu muat ulang halaman."""
+    """
+    Hapus cache data. Fungsi ini dipakai sebagai CALLBACK tombol Refresh
+    (on_click), jadi berjalan SEBELUM skrip dijalankan ulang oleh
+    Streamlit. Sengaja TIDAK memanggil st.rerun():
+
+    Bila st.rerun() dipanggil di tengah skrip (setelah tombol, tetapi
+    SEBELUM menu st.radio dibuat), Streamlit menganggap widget menu
+    tidak ikut dirender pada jalannya skrip itu lalu MENGHAPUS nilainya
+    dari session_state. Akibatnya menu kembali ke "Ringkasan" (tabel
+    pengadaan muncul) padahal di layar menu yang menyala masih
+    "Pembayaran". Dengan callback, tidak ada skrip yang terpotong
+    sehingga nilai menu tetap terjaga.
+    """
     st.cache_data.clear()
-    st.rerun()
+
+
+def render_nav():
+    """
+    Tombol Refresh + menu utama. Dipanggil TEPAT SATU KALI per jalannya
+    aplikasi dan SELALU yang PERTAMA (sebelum data dibaca), di dalam
+    wadah nav_box yang letaknya di bawah filter & kartu. Dengan begitu:
+      - nilai menu yang dipakai halaman = nilai yang dikembalikan widget
+        pada jalannya aplikasi yang sama (tidak ada selisih antara menu
+        yang tampak aktif dan isi halaman);
+      - menu tidak pernah hilang walau pembacaan data gagal / st.stop().
+
+    Tombol Refresh memakai on_click=refresh_data (bukan st.rerun()),
+    supaya skrip tidak terpotong sebelum menu dibuat (lihat refresh_data).
+
+    Tombol dirender tepat sebelum menu. Lewat CSS (.st-key-refresh_btn)
+    wadah tombol dibuat selebar penuh & setinggi 0, lalu tombolnya
+    diposisikan di sisi KANAN baris menu dengan ukuran yang sama seperti
+    menu (tinggi 40px, bentuk pil). Bila posisinya kurang pas secara
+    vertikal, ubah nilai --refresh-top di blok :root pada CSS.
+    Di layar sempit (<= 1100px) tombol tampil di atas menu.
+    """
+    st.button(
+        "🔄 Refresh Data",
+        key="refresh_btn",
+        on_click=refresh_data
+    )
+
+    return st.radio(
+        "Menu",
+        MENU_ITEMS,
+        horizontal=True,
+        key=MENU_KEY,
+        label_visibility="collapsed"
+    )
+
+
+def footer_caption():
+    st.write("")
+
+    st.caption(
+        "Keterangan warna sel di Google Sheets:  "
+        "🟩 Hijau = Selesai   |   🟨 Kuning = Berjalan   |   ⬜ Putih = Belum Mulai"
+    )
 
 
 # ---------- Tabel Daftar Pengadaan (kelengkapan dokumen 1-12) ----------
@@ -2172,7 +2811,11 @@ def doc_status_cell(status, doc_name):
     return '<td class="dc" title="{}">{}</td>'.format(tooltip, content)
 
 
-def progress_cell(value):
+def progress_cell(value, extra_class=""):
+    """
+    Sel progres. `extra_class` dipakai tabel pembayaran untuk
+    mengunci kolom ini di sisi kanan (class "s4").
+    """
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -2180,14 +2823,16 @@ def progress_cell(value):
 
     width = min(max(number, 0.0), 100.0)
 
+    css = "c-prog" + (" " + extra_class if extra_class else "")
+
     return (
-        '<td class="c-prog">'
+        '<td class="{css}">'
         '<div class="pg-wrap">'
         '<div class="pg-bar"><div style="width:{width:.1f}%;"></div></div>'
         '<span class="pg-text">{number:.1f}%</span>'
         '</div>'
         '</td>'
-    ).format(width=width, number=number)
+    ).format(css=css, width=width, number=number)
 
 
 def procurement_table_html(data):
@@ -2270,11 +2915,1039 @@ def document_legend_html():
 
 
 # ==================================================
-# HEADER
-# Logo BRI (kiri) | judul + keterangan (tengah) | logo DWI (kanan).
-# Tombol Refresh Data berada di sebelah kanan baris tab (lihat bagian
-# TOMBOL REFRESH + TAB di bawah).
+# PEMBAYARAN PENGADAAN (worksheet Sheet2)
 # ==================================================
+
+# ---------- Pembaca nilai ----------
+
+def parse_money(text):
+    """
+    Teks rupiah -> angka. Contoh: "Rp155,844" -> 155844.0.
+    Pemisah ribuan (koma/titik) dikenali otomatis.
+    Return None bila tidak ada angka.
+    """
+    if text is None:
+        return None
+
+    if isinstance(text, (int, float)) and not isinstance(text, bool):
+        return float(text)
+
+    cleaned = re.sub(r"[^0-9.,\-]", "", str(text))
+
+    if not re.search(r"\d", cleaned):
+        return None
+
+    negative = cleaned.startswith("-")
+    cleaned = cleaned.replace("-", "")
+
+    if "," in cleaned and "." in cleaned:
+        decimal = "," if cleaned.rfind(",") > cleaned.rfind(".") else "."
+        thousand = "." if decimal == "," else ","
+        cleaned = cleaned.replace(thousand, "").replace(decimal, ".")
+    elif "," in cleaned or "." in cleaned:
+        separator = "," if "," in cleaned else "."
+        parts = cleaned.split(separator)
+
+        if len(parts) > 2 or len(parts[-1]) == 3:
+            cleaned = cleaned.replace(separator, "")
+        else:
+            cleaned = cleaned.replace(separator, ".")
+
+    try:
+        value = float(cleaned)
+    except ValueError:
+        return None
+
+    return -value if negative else value
+
+
+def parse_int(text):
+    """Angka bulat pertama dalam teks ("6" -> 6). 0 bila tidak ada."""
+    match = re.search(r"\d+", str(text))
+    return int(match.group()) if match else 0
+
+
+# Singkatan bulan Indonesia -> Inggris (agar dibaca strptime)
+ID_MONTH_FIX = {
+    "agu": "Aug",
+    "agt": "Aug",
+    "ags": "Aug",
+    "okt": "Oct",
+    "des": "Dec",
+    "mei": "May",
+}
+
+
+def parse_payment_date(text):
+    """
+    Tanggal sheet pembayaran, mis. "20-Jul-26" atau "5-Oct-2026".
+    Format angka biasa (9/29/2026, 2026-09-29) tetap dibaca.
+    """
+    if text is None:
+        return None
+
+    parsed = parse_date(text, get_date_order())
+
+    if parsed is not None:
+        return parsed
+
+    value = str(text).strip()
+
+    if not value or value == "-":
+        return None
+
+    for source, target in ID_MONTH_FIX.items():
+        value = re.sub(
+            r"\b{}\b".format(source), target, value, flags=re.IGNORECASE
+        )
+
+    for fmt in (
+        "%d-%b-%y", "%d-%b-%Y", "%d %b %y", "%d/%b/%Y",
+        "%d-%B-%Y", "%d %B %Y"
+    ):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+
+    return None
+
+
+def shift_month(year, month, delta):
+    """(tahun, bulan) digeser `delta` bulan. Aman melewati pergantian tahun."""
+    total = year * 12 + (month - 1) + delta
+    return total // 12, total % 12 + 1
+
+
+def month_label(year, month):
+    return "{} {}".format(MONTH_NAMES[month - 1], year)
+
+
+def format_rp(value):
+    """Angka -> "Rp155,844" (sama seperti tampilan di spreadsheet)."""
+    if value is None:
+        return "-"
+    return "Rp{:,.0f}".format(value)
+
+
+def cell_text(row, index):
+    """Isi sel sebagai teks. Kosong bila indeks di luar baris / None."""
+    if index is None or index >= len(row):
+        return ""
+    return str(row[index])
+
+
+# ---------- Deteksi struktur sheet pembayaran ----------
+
+def find_payment_header(values):
+    """
+    Cari struktur header sheet pembayaran.
+
+    - Baris "Project" dan baris "Tanggal SPK" (bisa berbeda karena header
+      bertingkat).
+    - Baris nama bulan: baris (dari 15 baris pertama) yang berisi nama
+      bulan paling banyak. Baris ini bisa berbeda dari baris "Project".
+
+    Return dict:
+      first      : baris pertama blok header
+      last       : baris terakhir blok header (data mulai last + 1)
+      month_row  : baris nama bulan (None bila tidak ada)
+    atau None bila baris "Project" / "Tanggal SPK" tidak ditemukan.
+    """
+    project_row = None
+    spk_row = None
+
+    for i, row in enumerate(values[:15]):
+        keys = [norm(c) for c in row]
+
+        if project_row is None and "project" in keys:
+            project_row = i
+
+        if spk_row is None and "tanggalspk" in keys:
+            spk_row = i
+
+    info_rows = [r for r in (project_row, spk_row) if r is not None]
+
+    if not info_rows:
+        return None
+
+    # Baris nama bulan = baris dengan jumlah nama bulan terbanyak
+    month_row = None
+    best = 0
+
+    for i, row in enumerate(values[:15]):
+        count = sum(1 for c in row if norm(c) in MONTH_LOOKUP)
+
+        if count > best:
+            best = count
+            month_row = i
+
+    rows = list(info_rows)
+
+    if month_row is not None:
+        rows.append(month_row)
+
+    return {
+        "first": min(rows),
+        "last": max(rows),
+        "month_row": month_row,
+    }
+
+
+def year_of(text):
+    """Tahun 4 digit (2000-2099) dari teks sel, atau None."""
+    match = re.fullmatch(r"(20\d\d)(\.0)?", norm(text))
+    return int(match.group(1)) if match else None
+
+
+def detect_month_columns(values, first, last):
+    """
+    Cari kolom bulan pembayaran dari baris header `first`..`last`.
+
+    Tahun diambil dari sel tahun (2026, 2027, ...) dan berlaku ke kanan
+    sampai ada tahun berikutnya. Bila sel tahun tidak ada, tahun naik
+    otomatis saat nama bulan kembali ke awal (Desember -> Januari).
+    Kolom "Tanggal Pembayaran FMA ..." dipasangkan ke bulan di kirinya.
+
+    Return list: {"year", "month", "col", "fma_col"}
+    """
+    width = max((len(values[r]) for r in range(first, last + 1)), default=0)
+
+    months = []
+    year = None
+    last_month = 0
+    explicit_year = False
+
+    for c in range(width):
+
+        texts = [
+            norm(values[r][c]) if c < len(values[r]) else ""
+            for r in range(first, last + 1)
+        ]
+
+        for text in texts:
+            found = year_of(text)
+            if found:
+                year = found
+                explicit_year = True
+
+        month = next(
+            (MONTH_LOOKUP[t] for t in texts if t in MONTH_LOOKUP),
+            None
+        )
+
+        if month is not None:
+
+            if year is None:
+                year = today_wib().year
+            elif not explicit_year and month <= last_month:
+                year += 1
+
+            months.append({
+                "year": year,
+                "month": month,
+                "col": c,
+                "fma_col": None
+            })
+
+            last_month = month
+            explicit_year = False
+            continue
+
+        is_fma = any(
+            "fma" in t or "tanggalpembayaran" in t for t in texts
+        )
+
+        if is_fma and months and months[-1]["fma_col"] is None:
+            months[-1]["fma_col"] = c
+
+    return months
+
+
+# ---------- Membentuk data pembayaran per pengadaan ----------
+
+def parse_payment_sheet(values, grid):
+    """
+    Ubah isi sheet pembayaran (teks + warna sel) menjadi daftar pengadaan.
+
+    Tiap pengadaan (hanya status Running) berisi:
+      schedule : daftar cicilan berurutan {year, month, amount, status, fma}
+      cells    : {(tahun, bulan): cicilan} khusus bulan yang ada di sheet
+      paid / proses / total / progress / pay_status, dst.
+
+    Return: (records, months, info)
+    """
+    header = find_payment_header(values)
+
+    if header is None:
+        raise ValueError(
+            "Baris header 'Project' / 'Tanggal SPK' tidak ditemukan "
+            "pada sheet pembayaran."
+        )
+
+    first = header["first"]
+    last = header["last"]
+    month_row = header["month_row"]
+
+    headers = build_headers(values, first, last)
+
+   
+    if month_row is not None:
+        scan_first = max(min(first, month_row) - 1, 0)
+        months = detect_month_columns(values, scan_first, last)
+    else:
+        months = []
+
+
+    limit = months[0]["col"] if months else len(headers)
+    info_headers = headers[:limit]
+
+    def column(key, fuzzy=True):
+        found = find_col(info_headers, PAY_COLUMN_ALIASES[key], fuzzy=fuzzy)
+        return info_headers.index(found) if found is not None else None
+
+    c_jenis = column("Jenis")
+    c_name = column("Nama")
+    c_spk = column("SPK")
+    c_nilai = column("Nilai")
+    c_status = column("Status")
+    c_durasi = column("Durasi")
+
+    if c_name is None:
+        raise ValueError("Kolom 'Project' tidak ditemukan pada sheet pembayaran.")
+
+    records = []
+
+    for r in range(last + 1, len(values)):
+
+        row = values[r]
+
+        if is_ket_row(row):
+            break
+
+        name = cell_text(row, c_name).strip().strip('"').strip()
+
+        if not name or name == "-":
+            continue
+
+        # Hanya pengadaan berstatus Running
+        if c_status is not None:
+            if norm(cell_text(row, c_status)) != PAY_RUNNING_STATUS:
+                continue
+
+        grid_cells = grid[r].get("values", []) if r < len(grid) else []
+
+        # ----- cicilan yang ada di sheet (per kolom bulan) -----
+        schedule = []
+
+        for month in months:
+
+            col = month["col"]
+            amount_text = cell_text(row, col).strip()
+            status = (
+                get_status(grid_cells[col])
+                if col < len(grid_cells)
+                else "Pending"
+            )
+
+            # Bulan tanpa angka dan tanpa warna = bukan bulan cicilan
+            if amount_text in {"", "-"} and status == "Pending":
+                continue
+
+            fma_text = cell_text(row, month["fma_col"]).strip()
+
+            if fma_text == "-":
+                fma_text = ""
+
+            schedule.append({
+                "year": month["year"],
+                "month": month["month"],
+                "amount": parse_money(amount_text),
+                "status": status,
+                "fma": parse_payment_date(fma_text),
+                "fma_text": fma_text,
+                "in_sheet": True,
+            })
+
+        cells = {(e["year"], e["month"]): e for e in schedule}
+
+        # ----- identitas pengadaan -----
+        tgl_spk = parse_payment_date(cell_text(row, c_spk))
+        nilai = parse_money(cell_text(row, c_nilai))
+        durasi = parse_int(cell_text(row, c_durasi))
+
+        total = max(durasi, len(schedule))
+
+        # Mulai pembayaran = bulan setelah tanggal SPK
+        if tgl_spk is not None:
+            start = shift_month(tgl_spk.year, tgl_spk.month, 1)
+        elif schedule:
+            start = (schedule[0]["year"], schedule[0]["month"])
+        else:
+            start = None
+
+        # Cicilan yang jatuh di luar kolom sheet (mis. durasi 12 bulan tetapi
+        # kolom bulan baru sampai September) ditambahkan sebagai belum mulai.
+        if schedule:
+            following = shift_month(
+                schedule[-1]["year"], schedule[-1]["month"], 1
+            )
+        else:
+            following = start
+
+        while following is not None and len(schedule) < total:
+            schedule.append({
+                "year": following[0],
+                "month": following[1],
+                "amount": None,
+                "status": "Pending",
+                "fma": None,
+                "fma_text": "",
+                "in_sheet": False,
+            })
+            following = shift_month(following[0], following[1], 1)
+
+        # ----- hitungan pembayaran -----
+        paid = sum(1 for e in schedule if e["status"] == "Done")
+        proses = sum(1 for e in schedule if e["status"] == "On Progress")
+
+        paid_amount = sum(
+            e["amount"] or 0 for e in schedule if e["status"] == "Done"
+        )
+        proses_amount = sum(
+            e["amount"] or 0 for e in schedule if e["status"] == "On Progress"
+        )
+
+        if total == 0:
+            pay_status = "Belum Mulai"
+        else:
+            pay_status = procurement_status_from_counts(paid, proses, total)
+
+        # Nomor urut dibuat sendiri (1, 2, 3, ...), tidak mengikuti kolom
+        # No di sheet karena baris non-Running dilewati dan nomornya loncat.
+        records.append({
+            "no": len(records) + 1,
+            "jenis": cell_text(row, c_jenis).strip() or "-",
+            "nama": name,
+            "tgl_spk": tgl_spk,
+            "nilai": nilai,
+            "durasi": durasi,
+            "total": total,
+            "start": start,
+            "end": (
+                (schedule[-1]["year"], schedule[-1]["month"])
+                if schedule else None
+            ),
+            "schedule": schedule,
+            "cells": cells,
+            "paid": paid,
+            "proses": proses,
+            "paid_amount": paid_amount,
+            "proses_amount": proses_amount,
+            "progress": round(paid / total * 100, 1) if total else 0.0,
+            "pay_status": pay_status,
+        })
+
+    info = {
+        "has_status": c_status is not None,
+        "has_spk": c_spk is not None,
+        "has_nilai": c_nilai is not None,
+        "month_count": len(months),
+        "month_row_sheet": (month_row + 1) if month_row is not None else None,
+        "header_row_sheet": first + 1,
+        "data_row_sheet": last + 2,
+    }
+
+    return records, months, info
+
+
+# ---------- Membaca sheet pembayaran dari Google Sheets ----------
+
+def fetch_cell_grid(spreadsheet_id, range_name, row_count):
+    """Format (warna) semua sel pada sheet, per baris."""
+
+    def fetch_colors():
+        service = build(
+            "sheets",
+            "v4",
+            credentials=get_credentials(),
+            cache_discovery=False
+        )
+
+        return service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            ranges=["{}!A1:BZ{}".format(range_name, row_count)],
+            includeGridData=True,
+            fields=(
+                "sheets(properties(title),"
+                "data(rowData(values("
+                "effectiveFormat(backgroundColor),"
+                "userEnteredFormat(backgroundColor)))))"
+            )
+        ).execute(num_retries=3)
+
+    response = with_retry(fetch_colors)
+
+    sheet_data = response["sheets"][0]
+
+    return sheet_data.get("data", [{}])[0].get("rowData", [])
+
+
+@st.cache_data(ttl=30)
+def load_payment_data():
+
+    spreadsheet_id = st.secrets["google_sheet"]["spreadsheet_id"]
+    sheet_name = get_setting("payment_worksheet_name", PAY_SHEET_DEFAULT)
+
+    def fetch_values():
+        client = connect_google()
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        worksheet = spreadsheet.worksheet(sheet_name)
+        return worksheet.get_all_values()
+
+    values = with_retry(fetch_values)
+
+    if not values:
+        return [], [], {"has_status": True}
+
+    if str(sheet_name).replace("_", "").isalnum():
+        range_name = str(sheet_name)
+    else:
+        range_name = "'{}'".format(str(sheet_name).replace("'", "''"))
+
+    grid = fetch_cell_grid(spreadsheet_id, range_name, len(values))
+
+    return parse_payment_sheet(values, grid)
+
+
+
+def render_payment_filters(records, box):
+    """Filter khusus pembayaran (ditaruh di wadah `box`). Return (cari, tahun, status)."""
+
+    # Tahun yang tersedia = tahun MULAI pembayaran tiap pengadaan
+    years = sorted({r["start"][0] for r in records if r["start"]})
+
+    with box:
+        p1, p2, p3, _spare1, _spare2 = st.columns([2.2, 1, 1, 1, 1])
+
+    search = p1.text_input(
+        "Cari pengadaan",
+        placeholder="Ketik nama pengadaan...",
+        key="pay_search"
+    )
+
+    year_choice = p2.selectbox(
+        "Tahun Mulai Pembayaran",
+        ["Semua"] + [str(y) for y in years],
+        key="pay_year"
+    )
+
+    status_choice = p3.selectbox(
+        "Status Pembayaran",
+        ["Semua"] + STATUS_ORDER,
+        key="pay_status"
+    )
+
+    return search, year_choice, status_choice
+
+
+def apply_payment_filters(records, search, year_choice, status_choice):
+
+    shown = list(records)
+
+    if search.strip():
+        keyword = search.strip().lower()
+        shown = [r for r in shown if keyword in r["nama"].lower()]
+
+    if year_choice != "Semua":
+        year = int(year_choice)
+        shown = [
+            r for r in shown
+            if r["start"] and r["start"][0] == year
+        ]
+
+    if status_choice != "Semua":
+        shown = [r for r in shown if r["pay_status"] == status_choice]
+
+    # Nomor urut ulang 1..n sesuai hasil filter
+    return [dict(r, no=i) for i, r in enumerate(shown, start=1)]
+
+
+def render_payment_kpis(shown, box):
+    """
+    Kartu ringkasan pembayaran (sama susunannya dengan kartu pengadaan):
+    Total, Selesai, Berjalan, Belum Mulai, Progres.
+
+    Hijau = Selesai (dibayar), Kuning = Berjalan (diproses),
+    Putih = Belum Mulai. Angka besar = jumlah pengadaan pada status itu;
+    keterangan kecil = jumlah cicilan per warna.
+    """
+    total = len(shown)
+
+    n_selesai = sum(1 for r in shown if r["pay_status"] == "Selesai")
+    n_berjalan = sum(1 for r in shown if r["pay_status"] == "Berjalan")
+    n_belum = sum(1 for r in shown if r["pay_status"] == "Belum Mulai")
+
+    cicilan_total = sum(r["total"] for r in shown)
+    cicilan_paid = sum(r["paid"] for r in shown)
+    cicilan_proses = sum(r["proses"] for r in shown)
+    cicilan_belum = max(cicilan_total - cicilan_paid - cicilan_proses, 0)
+
+    overall = cicilan_paid / cicilan_total * 100 if cicilan_total else 0.0
+
+    with box:
+        k1, k2, k3, k4, k5 = st.columns(5)
+
+    k1.markdown(
+        kpi_card(
+            "Total Pembayaran",
+            total,
+            "{} cicilan (status Running)".format(cicilan_total),
+            BRAND_PRIMARY,
+            icon="card"
+        ),
+        unsafe_allow_html=True
+    )
+    k2.markdown(
+        kpi_card(
+            "Selesai",
+            n_selesai,
+            "{} Cicilan Dibayar".format(cicilan_paid),
+            BRAND_PRIMARY,
+            icon="check"
+        ),
+        unsafe_allow_html=True
+    )
+    k3.markdown(
+        kpi_card(
+            "Berjalan",
+            n_berjalan,
+            "{} Cicilan Diproses".format(cicilan_proses),
+            BRAND_PRIMARY,
+            icon="clock"
+        ),
+        unsafe_allow_html=True
+    )
+    k4.markdown(
+        kpi_card(
+            "Belum Mulai",
+            n_belum,
+            "{} Cicilan Belum Mulai".format(cicilan_belum),
+            BRAND_PRIMARY,
+            icon="list"
+        ),
+        unsafe_allow_html=True
+    )
+    k5.markdown(
+        kpi_card(
+            "Progres Pembayaran",
+            "{:.1f}%".format(overall),
+            "{} dari {} cicilan dibayar".format(cicilan_paid, cicilan_total),
+            BRAND_PRIMARY,
+            icon="pie"
+        ),
+        unsafe_allow_html=True
+    )
+
+
+# ---------- Tabel Pembayaran Pengadaan ----------
+
+def payment_status_cell(entry, month):
+    """
+    Satu sel cicilan pada bulan tertentu:
+      hijau  -> centang hijau
+      kuning -> bulat kuning
+      putih  -> lingkaran kosong (bulan cicilan, belum mulai)
+      bukan bulan cicilan -> sel kosong
+    """
+    if entry is None:
+        return '<td class="dc"></td>'
+
+    status = entry["status"]
+    label = PAY_STATUS_LABEL.get(status, status)
+
+    tooltip = "{} - {}".format(
+        month_label(month["year"], month["month"]), label
+    )
+
+    if entry["amount"] is not None:
+        tooltip += " - {}".format(format_rp(entry["amount"]))
+
+    if status == "Done":
+        content = '<span class="chk">&#10003;</span>'
+    elif status == "On Progress":
+        content = '<span class="dot"></span>'
+    else:
+        content = '<span class="empty-box"></span>'
+
+    return '<td class="dc" title="{}">{}</td>'.format(esc(tooltip), content)
+
+
+def payment_table_html(records, months):
+    """
+    Tabel HTML pembayaran dengan header bertingkat:
+    Pembayaran -> tahun -> bulan.
+
+    Kolom No, Nama Pengadaan, dan Mulai Pembayaran dikunci di kiri
+    (class s1, s2, s3), kolom Progres dikunci di kanan (class s4).
+    Hanya kolom tahun/bulan yang ikut bergeser saat di-scroll horizontal.
+    (Di HP, hanya No dan Nama yang dikunci; lihat blok RESPONSIF di CSS.)
+    """
+    year_groups = []
+
+    for month in months:
+        if year_groups and year_groups[-1][0] == month["year"]:
+            year_groups[-1][1] += 1
+        else:
+            year_groups.append([month["year"], 1])
+
+    head_top = (
+        '<tr class="h1">'
+        '<th rowspan="3" class="s1">No</th>'
+        '<th rowspan="3" class="th-left s2">Nama Pengadaan</th>'
+        '<th rowspan="3" class="s3">Mulai Pembayaran</th>'
+        '<th colspan="{count}">Pembayaran</th>'
+        '<th rowspan="3" class="s4">Progres</th>'
+        '</tr>'
+    ).format(count=len(months))
+
+    head_years = '<tr class="h2">{}</tr>'.format(
+        "".join(
+            '<th colspan="{}">{}</th>'.format(count, year)
+            for year, count in year_groups
+        )
+    )
+
+    head_months = '<tr class="h3">{}</tr>'.format(
+        "".join(
+            '<th title="{title}">{abbr}</th>'.format(
+                title=esc(month_label(m["year"], m["month"])),
+                abbr=MONTH_ABBR[m["month"] - 1]
+            )
+            for m in months
+        )
+    )
+
+    head = '<thead>{}{}{}</thead>'.format(head_top, head_years, head_months)
+
+    body_rows = []
+
+    for rec in records:
+
+        start_text = (
+            month_label(*rec["start"]) if rec["start"] else "-"
+        )
+
+        cells = [
+            '<td class="c-no s1">{}</td>'.format(int(rec["no"])),
+            '<td class="c-name s2">{}</td>'.format(esc(rec["nama"])),
+            '<td class="c-start s3">{}</td>'.format(esc(start_text)),
+        ]
+
+        for month in months:
+            entry = rec["cells"].get((month["year"], month["month"]))
+            cells.append(payment_status_cell(entry, month))
+
+        cells.append(progress_cell(rec["progress"], "s4"))
+
+        body_rows.append("<tr>{}</tr>".format("".join(cells)))
+
+    return (
+        '<div class="tbl-wrap">'
+        '<table class="proc-table pay-table">{head}<tbody>{body}</tbody></table>'
+        '</div>'
+    ).format(head=head, body="".join(body_rows))
+
+
+def payment_legend_html():
+    """Keterangan arti ikon pada tabel pembayaran."""
+
+    status = (
+        '<div class="legend-status solo">'
+        '<span><span class="chk">&#10003;</span> Selesai / Dibayar (sel hijau)</span>'
+        '<span><span class="dot"></span> Berjalan / Diproses (sel kuning)</span>'
+        '<span><span class="empty-box"></span> Belum Mulai (sel putih)</span>'
+        '<span>Sel kosong = bukan bulan cicilan</span>'
+        '</div>'
+    )
+
+    return (
+        '<div class="legend-box">'
+        '<div class="legend-title">Keterangan Status Pembayaran</div>'
+        '{status}'
+        '</div>'
+    ).format(status=status)
+
+
+def render_payment_list(shown, months):
+    """Isi menu 'Pembayaran Pengadaan': tabel + keterangan."""
+
+    st.markdown(
+        '<div class="section-title">Daftar Pembayaran Pengadaan</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        payment_table_html(shown, months),
+        unsafe_allow_html=True
+    )
+
+    st.markdown(payment_legend_html(), unsafe_allow_html=True)
+
+
+
+# ---------- Detail Pembayaran Pengadaan ----------
+
+def schedule_columns(count):
+    """
+    Jumlah kolom kartu jadwal agar susunannya selalu rapi (baris terakhir
+    tidak menyisakan banyak ruang kosong):
+      1-4 cicilan -> sebanyak cicilan (1 baris)
+      5   cicilan -> 5 kolom (1 baris)
+      6   cicilan -> 3 kolom (2 baris, 3 + 3)
+      7+  cicilan -> 3 sampai 6 kolom dengan sisa kosong paling sedikit
+                     (diutamakan 4, lalu 3, 5, 6)
+    Di layar sempit, jumlah kolom otomatis dikurangi lewat CSS
+    (2 kolom di tablet, 1 kolom di HP).
+    """
+    if count <= 5:
+        return max(count, 1)
+
+    best_cols = 4
+    best_empty = None
+
+    for cols in (4, 3, 5, 6):
+        empty = (-count) % cols
+
+        if best_empty is None or empty < best_empty:
+            best_cols = cols
+            best_empty = empty
+
+    return best_cols
+
+
+def payment_schedule_html(schedule):
+    """
+    Kartu jadwal pembayaran per bulan. Setiap kartu berisi: nomor + bulan,
+    nilai cicilan, tanggal FMA, dan status. Jumlah kolom mengikuti jumlah
+    cicilan (lihat schedule_columns).
+    """
+    if not schedule:
+        return '<div class="doc-meta">Belum ada jadwal pembayaran.</div>'
+
+    cards = []
+
+    for number, entry in enumerate(schedule, start=1):
+
+        status = entry["status"]
+
+        css = {
+            "Done": "done",
+            "On Progress": "progress",
+            "Pending": "pending"
+        }.get(status, "pending")
+
+        if entry["fma"] is not None:
+            fma = fmt_date(entry["fma"])
+        elif entry["fma_text"]:
+            fma = entry["fma_text"]
+        else:
+            fma = "Belum ada"
+
+        cards.append(
+            '<div class="pay-card {css}">'
+            '<div class="pay-head">'
+            '<span class="pay-no">{number}</span>'
+            '<span class="pay-month">{month}</span>'
+            '</div>'
+            '<div class="pay-amount">{amount}</div>'
+            '<div class="pay-meta">'
+            '<span class="pay-meta-label">Tanggal FMA</span>'
+            '<span class="pay-meta-value">{fma}</span>'
+            '</div>'
+            '<div class="pay-foot">'
+            '<span class="pill {pill}">{status}</span>'
+            '</div>'
+            '</div>'.format(
+                css=css,
+                number=number,
+                month=esc(month_label(entry["year"], entry["month"])),
+                amount=esc(format_rp(entry["amount"])),
+                fma=esc(fma),
+                pill=PILL_CLASS.get(status, "pill-pending"),
+                status=esc(PAY_STATUS_LABEL.get(status, status))
+            )
+        )
+
+    return '<div class="pay-grid" style="--cols:{};">{}</div>'.format(
+        schedule_columns(len(schedule)), "".join(cards)
+    )
+
+
+def payment_summary_html(rec):
+    """Ringkasan jumlah cicilan per status di atas kartu jadwal."""
+
+    belum = max(rec["total"] - rec["paid"] - rec["proses"], 0)
+
+    return (
+        '<div class="pay-summary">'
+        '<span class="pill pill-done">Dibayar: {paid}</span>'
+        '<span class="pill pill-progress">Diproses: {proses}</span>'
+        '<span class="pill pill-pending">Belum Mulai: {belum}</span>'
+        '</div>'
+    ).format(paid=rec["paid"], proses=rec["proses"], belum=belum)
+
+
+def render_payment_detail(rec):
+    """Detail satu pengadaan: nilai, terbayar, sisa, dan jadwal per bulan."""
+
+    st.markdown(
+        '<div class="section-title" style="margin-top:0.6rem;">{}</div>'.format(
+            esc(rec["nama"])
+        ),
+        unsafe_allow_html=True
+    )
+
+    # ---------- Info umum ----------
+
+    if rec["start"] and rec["end"]:
+        period = "{} – {}".format(
+            month_label(*rec["start"]), month_label(*rec["end"])
+        )
+    else:
+        period = "-"
+
+    i1, i2, i3 = st.columns(3)
+
+    i1.markdown(
+        info_card("Jenis", rec["jenis"], "tag", BRAND_PRIMARY),
+        unsafe_allow_html=True
+    )
+    i2.markdown(
+        info_card(
+            "Tanggal SPK", fmt_date(rec["tgl_spk"]),
+            "calendar", BRAND_PRIMARY
+        ),
+        unsafe_allow_html=True
+    )
+    i3.markdown(
+        info_card("Periode Pembayaran", period, "calendar", BRAND_PRIMARY),
+        unsafe_allow_html=True
+    )
+
+    st.write("")
+
+    # ---------- Nilai pengadaan, terbayar, sisa ----------
+
+    nilai = rec["nilai"]
+    belum = max(nilai - rec["paid_amount"], 0) if nilai is not None else None
+
+    if rec["proses_amount"]:
+        belum_sub = "termasuk {} dalam proses".format(
+            format_rp(rec["proses_amount"])
+        )
+    else:
+        belum_sub = "{} cicilan tersisa".format(rec["total"] - rec["paid"])
+
+    d1, d2, d3, d4 = st.columns(4)
+
+    d1.markdown(
+        kpi_card(
+            "Nilai Pengadaan",
+            format_rp(nilai),
+            "durasi {} bulan".format(rec["total"]),
+            BRAND_PRIMARY,
+            icon="coin"
+        ),
+        unsafe_allow_html=True
+    )
+    d2.markdown(
+        kpi_card(
+            "Sudah Dibayar",
+            format_rp(rec["paid_amount"]),
+            "{} dari {} cicilan".format(rec["paid"], rec["total"]),
+            BRAND_PRIMARY,
+            icon="check"
+        ),
+        unsafe_allow_html=True
+    )
+    d3.markdown(
+        kpi_card(
+            "Belum Dibayar",
+            format_rp(belum),
+            belum_sub,
+            BRAND_PRIMARY,
+            icon="clock"
+        ),
+        unsafe_allow_html=True
+    )
+    d4.markdown(
+        kpi_card(
+            "Progres Pembayaran",
+            "{:.1f}%".format(rec["progress"]),
+            "status: {}".format(rec["pay_status"]),
+            BRAND_PRIMARY,
+            icon="bars"
+        ),
+        unsafe_allow_html=True
+    )
+
+    st.write("")
+
+    # ---------- Progress bar ----------
+
+    st.markdown(
+        '<div class="pbar-head">'
+        '<span>Progres Pembayaran</span><span>{:.1f}%</span></div>'
+        '<div class="pbar"><div style="width:{:.1f}%;"></div></div>'.format(
+            rec["progress"],
+            min(max(rec["progress"], 0), 100)
+        ),
+        unsafe_allow_html=True
+    )
+
+    # ---------- Jadwal pembayaran per bulan ----------
+
+    st.markdown(
+        '<div class="section-title">Jadwal Pembayaran per Bulan</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(payment_summary_html(rec), unsafe_allow_html=True)
+
+    st.markdown(
+        payment_schedule_html(rec["schedule"]),
+        unsafe_allow_html=True
+    )
+
+
+def render_payment_detail_page(shown):
+    """Isi menu 'Detail Pembayaran': pilih pengadaan lalu tampilkan detail."""
+
+    labels = ["{}. {}".format(int(r["no"]), r["nama"]) for r in shown]
+
+    selected = st.selectbox(
+        "Pilih pengadaan",
+        labels,
+        index=None,
+        placeholder="Pilih pengadaan untuk melihat detail pembayaran...",
+        key="pay_detail"
+    )
+
+    if not selected:
+
+        st.info(
+            "Pilih salah satu pengadaan di atas untuk melihat nilai "
+            "pengadaan, jumlah dibayar, sisa pembayaran, dan tanggal "
+            "pembayaran FMA tiap bulan."
+        )
+
+    else:
+
+        render_payment_detail(shown[labels.index(selected)])
+
+
+
 
 st.markdown(
     header_html(datetime.now(WIB).strftime("%d %b %Y, %H:%M")),
@@ -2282,8 +3955,87 @@ st.markdown(
 )
 
 
+notice_box = st.container()
+filters_box = st.container()
+kpi_box = st.container()
+nav_box = st.container()
+
+
+with nav_box:
+    menu = render_nav()
+
+
+
+if menu in PAYMENT_MENUS:
+
+    try:
+
+        pay_records, pay_months, pay_info = load_payment_data()
+
+    except Exception as error:
+
+        st.error(
+            "Gagal membaca data pembayaran dari Google Sheets. "
+            "Periksa nama worksheet (default: Sheet2) dan konfigurasi."
+        )
+
+        st.code(str(error))
+
+        st.stop()
+
+    if not pay_info.get("has_status", True):
+        st.warning(
+            "Kolom 'Status' tidak ditemukan di sheet pembayaran, jadi "
+            "semua pengadaan ditampilkan (tidak hanya yang Running)."
+        )
+
+    if not pay_months:
+        st.warning(
+            "Kolom bulan pembayaran (Agustus, September, ...) tidak "
+            "ditemukan di sheet pembayaran. Pastikan ada satu baris "
+            "header yang berisi nama bulan (Agustus, September, dst.) "
+            "di 15 baris pertama worksheet '{}'.".format(
+                get_setting("payment_worksheet_name", PAY_SHEET_DEFAULT)
+            )
+        )
+        st.stop()
+
+    if not pay_records:
+        st.info("Belum ada pengadaan berstatus Running di sheet pembayaran.")
+        st.stop()
+
+    # ---------- Filter pembayaran ----------
+
+    pay_search, pay_year, pay_status = render_payment_filters(
+        pay_records, filters_box
+    )
+
+    pay_shown = apply_payment_filters(
+        pay_records, pay_search, pay_year, pay_status
+    )
+
+    if not pay_shown:
+        st.info("Tidak ada pembayaran pengadaan yang cocok dengan filter saat ini.")
+        st.stop()
+
+    # ---------- Kartu pembayaran ----------
+
+    render_payment_kpis(pay_shown, kpi_box)
+
+    # ---------- Isi menu ----------
+
+    if menu == MENU_PAYMENT:
+        render_payment_list(pay_shown, pay_months)
+    else:
+        render_payment_detail_page(pay_shown)
+
+    footer_caption()
+
+    st.stop()
+
+
 # ==================================================
-# MEMUAT DATA
+# MEMUAT DATA PENGADAAN
 # ==================================================
 
 try:
@@ -2299,10 +4051,6 @@ except Exception as error:
 
     st.code(str(error))
 
-    # Tombol cadangan agar tetap bisa memuat ulang saat terjadi error
-    if st.button("🔄 Refresh Data", key="refresh_fallback"):
-        refresh_data()
-
     st.stop()
 
 
@@ -2310,15 +4058,12 @@ if df.empty:
 
     st.warning("Data pengadaan belum tersedia.")
 
-    if st.button("🔄 Refresh Data", key="refresh_fallback"):
-        refresh_data()
-
     st.stop()
 
 
 if info.get("number_row_sheet") is None:
 
-    st.warning(
+    notice_box.warning(
         "Baris header angka 1–12 untuk kolom dokumen tidak ditemukan. "
         "Dashboard memakai 12 kolom tepat setelah kolom 'Vendor'. "
         "Pastikan header dokumen berisi angka 1 sampai 12."
@@ -2335,7 +4080,7 @@ if not info.get("has_selesai"):
     missing_cols.append("Pengadaan Selesai")
 
 if missing_cols:
-    st.warning(
+    notice_box.warning(
         "Kolom berikut tidak ditemukan di spreadsheet: {}. "
         "Waiting time yang terkait tidak dapat dihitung.".format(
             ", ".join(missing_cols)
@@ -2354,7 +4099,8 @@ def options_of(column):
     return sorted(df[column].astype(str).str.strip().unique().tolist())
 
 
-f1, f2, f3, f4, f5 = st.columns([2.2, 1, 1, 1, 1])
+with filters_box:
+    f1, f2, f3, f4, f5 = st.columns([2.2, 1, 1, 1, 1])
 
 search = f1.text_input(
     "Cari pengadaan",
@@ -2411,24 +4157,9 @@ if fdf.empty:
 
     st.info("Tidak ada pengadaan yang cocok dengan filter saat ini.")
 
-    if st.button("🔄 Refresh Data", key="refresh_fallback"):
-        refresh_data()
-
     st.stop()
 
 
-# ==================================================
-# KARTU KPI
-#
-# Kartu Selesai / Berjalan / Belum Mulai dihitung PER DOKUMEN:
-#   hijau  = Selesai
-#   kuning = Berjalan
-#   putih  = Belum Mulai
-# Sebuah pengadaan baru dihitung "Selesai" bila 12 dokumennya hijau semua
-# (angkanya ditampilkan di baris keterangan tiap kartu).
-#
-# Semua kartu KPI memakai aksen biru Qlola (BRAND_PRIMARY) agar seragam.
-# ==================================================
 
 total = len(fdf)
 total_docs = total * len(DOCS)
@@ -2442,7 +4173,8 @@ proc_selesai = int((fdf["Status Pengadaan"] == "Selesai").sum())
 proc_berjalan = int((fdf["Status Pengadaan"] == "Berjalan").sum())
 proc_belum = int((fdf["Status Pengadaan"] == "Belum Mulai").sum())
 
-k1, k2, k3, k4, k5 = st.columns(5)
+with kpi_box:
+    k1, k2, k3, k4, k5 = st.columns(5)
 
 k1.markdown(
     kpi_card(
@@ -2499,35 +4231,17 @@ k5.markdown(
 )
 
 
-# ==================================================
-# TOMBOL REFRESH + TAB
-#
-# Tombol dirender tepat sebelum tab. Lewat CSS (.st-key-refresh_btn)
-# wadah tombol dibuat selebar penuh & setinggi 0, lalu tombolnya
-# diposisikan di sisi KANAN baris tab dengan ukuran yang sama seperti
-# tab (tinggi 40px, bentuk pil).
-# Bila posisinya kurang pas secara vertikal, ubah nilai --refresh-top
-# di blok :root pada CSS.
-# ==================================================
-
-if st.button("🔄 Refresh Data", key="refresh_btn"):
-    refresh_data()
-
-tab_summary, tab_detail = st.tabs(
-    ["📋 Ringkasan", "🔍 Detail Pengadaan"]
-)
-
-# Warna grafik (nama tampilan -> warna). Dipakai di tab Ringkasan & Detail.
+# Warna grafik (nama tampilan -> warna). Dipakai di menu Ringkasan & Detail.
 label_colors = {
     DOC_STATUS_LABEL[key]: COLORS[key] for key in COLORS
 }
 
 
 # --------------------------------------------------
-# TAB 1: RINGKASAN
+# MENU 1: RINGKASAN
 # --------------------------------------------------
 
-with tab_summary:
+if menu == MENU_SUMMARY:
 
     # ---------- 1) Daftar Pengadaan (tabel) ----------
 
@@ -2550,8 +4264,7 @@ with tab_summary:
         unsafe_allow_html=True
     )
 
-    # Label sumbu Y: nomor + nama dokumen LENGKAP. Nama yang panjang
-    # dipecah menjadi 2 baris (wrap_label) sehingga tidak terpotong.
+   
     doc_labels = [
         wrap_label("{}. {}".format(number, doc))
         for number, doc in enumerate(DOCS, start=1)
@@ -2586,15 +4299,7 @@ with tab_summary:
         }
     )
 
-    # Rapi & konsisten di semua laptop:
-    #  - font eksplisit (bukan monospace) dan warna teks navy
-    #  - margin kiri lega + automargin agar label tidak terpotong
-    #  - label sumbu Y dipecah 2 baris (lihat wrap_label)
-    #  - urutan dokumen: 1 di paling atas sampai 12 di bawah (urutan
-    #    data + autorange="reversed" pada sumbu Y)
-    #  - jarak label ke sumbu (ticksuffix) supaya tidak menempel
-    #  - sumbu X hanya angka bulat (tanpa 0.5, 1.5, dst.)
-    #  - tinggi 560 agar tiap baris punya ruang yang cukup
+   
     fig_bar.update_layout(
         height=560,
         font=dict(family=PLOT_FONT, color=BRAND_TEXT, size=13),
@@ -2641,14 +4346,17 @@ with tab_summary:
 
     fig_bar.update_xaxes(**x_axis_options)
 
-    show_chart(fig_bar)
+    # Wadah ber-key supaya di HP grafik bisa digeser horizontal (CSS
+    # .st-key-chart_docs di blok RESPONSIF).
+    with keyed_container("chart_docs"):
+        show_chart(fig_bar)
 
 
 # --------------------------------------------------
-# TAB 2: DETAIL PENGADAAN
+# MENU 2: DETAIL PENGADAAN
 # --------------------------------------------------
 
-with tab_detail:
+elif menu == MENU_DETAIL:
 
     labels = [
         "{}. {}".format(int(r["No"]), r["Nama Pengadaan"])
@@ -2928,9 +4636,4 @@ with tab_detail:
 # KETERANGAN
 # ==================================================
 
-st.write("")
-
-st.caption(
-    "Keterangan warna sel di Google Sheets:  "
-    "🟩 Hijau = Selesai   |   🟨 Kuning = Berjalan   |   ⬜ Putih = Belum Mulai"
-)
+footer_caption()
