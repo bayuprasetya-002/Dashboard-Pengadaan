@@ -3603,9 +3603,6 @@ def payment_status_cell(entry, month):
         month_label(month["year"], month["month"]), label
     )
 
-    if entry["amount"] is not None:
-        tooltip += " - {}".format(format_rp(entry["amount"]))
-
     if status == "Done":
         content = '<span class="chk">&#10003;</span>'
     elif status == "On Progress":
@@ -3797,7 +3794,6 @@ def payment_schedule_html(schedule):
             '<span class="pay-no">{number}</span>'
             '<span class="pay-month">{month}</span>'
             '</div>'
-            '<div class="pay-amount">{amount}</div>'
             '<div class="pay-meta">'
             '<span class="pay-meta-label">Tanggal FMA</span>'
             '<span class="pay-meta-value">{fma}</span>'
@@ -3809,7 +3805,6 @@ def payment_schedule_html(schedule):
                 css=css,
                 number=number,
                 month=esc(month_label(entry["year"], entry["month"])),
-                amount=esc(format_rp(entry["amount"])),
                 fma=esc(fma),
                 pill=PILL_CLASS.get(status, "pill-pending"),
                 status=esc(PAY_STATUS_LABEL.get(status, status))
@@ -3885,51 +3880,6 @@ def render_payment_detail(rec):
         )
     else:
         belum_sub = "{} cicilan tersisa".format(rec["total"] - rec["paid"])
-
-    d1, d2, d3, d4 = st.columns(4)
-
-    d1.markdown(
-        kpi_card(
-            "Nilai Pengadaan",
-            format_rp(nilai),
-            "durasi {} bulan".format(rec["total"]),
-            BRAND_PRIMARY,
-            icon="coin"
-        ),
-        unsafe_allow_html=True
-    )
-    d2.markdown(
-        kpi_card(
-            "Sudah Dibayar",
-            format_rp(rec["paid_amount"]),
-            "{} dari {} cicilan".format(rec["paid"], rec["total"]),
-            BRAND_PRIMARY,
-            icon="check"
-        ),
-        unsafe_allow_html=True
-    )
-    d3.markdown(
-        kpi_card(
-            "Belum Dibayar",
-            format_rp(belum),
-            belum_sub,
-            BRAND_PRIMARY,
-            icon="clock"
-        ),
-        unsafe_allow_html=True
-    )
-    d4.markdown(
-        kpi_card(
-            "Progres Pembayaran",
-            "{:.1f}%".format(rec["progress"]),
-            "status: {}".format(rec["pay_status"]),
-            BRAND_PRIMARY,
-            icon="bars"
-        ),
-        unsafe_allow_html=True
-    )
-
-    st.write("")
 
     # ---------- Progress bar ----------
 
