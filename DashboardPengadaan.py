@@ -1233,6 +1233,16 @@ li[role="option"][aria-selected="true"] {
     min-width: var(--pay-w4);
     max-width: var(--pay-w4);
 }
+/* Lebar sel Nama & Progres mengikuti variabel lebar kolom. Aturan ini
+   WAJIB ada: tanpa ini, min-width bawaan .proc-table td.c-name (300px /
+   210px) dan td.c-prog (150px) menang atas lebar kolom tetap di layar
+   kecil, sehingga posisi "left" kolom terkunci jadi tidak akurat. */
+.pay-table td.c-name {
+    min-width: var(--pay-w2);
+}
+.pay-table td.c-prog {
+    min-width: var(--pay-w4);
+}
 /* Sel isi: di atas sel bulan saat digeser horizontal */
 .pay-table td.s1,
 .pay-table td.s2,
@@ -1300,7 +1310,7 @@ li[role="option"][aria-selected="true"] {
         --pay-w4: 130px;
     }
     .pay-table td.c-name {
-        min-width: 0;
+        min-width: var(--pay-w2);
     }
 }
 
@@ -1602,6 +1612,14 @@ li[role="option"][aria-selected="true"] {
         --pay-label-left: calc(var(--pay-w1) + var(--pay-w2));
         --pay-label-right: 0px;
     }
+    /* Lebar sel Nama & Progres kembali mengikuti variabel (menimpa
+       min-width 210px / 120px dari aturan .proc-table di atas). */
+    .pay-table td.c-name {
+        min-width: var(--pay-w2);
+    }
+    .pay-table td.c-prog {
+        min-width: var(--pay-w4);
+    }
     .pay-table .s2 {
         box-shadow: 6px 0 8px -6px rgba(15, 36, 71, 0.28);
     }
@@ -1610,6 +1628,25 @@ li[role="option"][aria-selected="true"] {
         left: auto;
         right: auto;
         box-shadow: none;
+    }
+    /* Kolom Mulai Pembayaran & Progres ikut bergeser, jadi z-index-nya
+       harus DI BAWAH kolom No & Nama yang dikunci. Tanpa ini, isinya
+       (mis. "Oktober 2026") menimpa kolom No & Nama saat digeser. */
+    .pay-table td.s3,
+    .pay-table td.s4 {
+        z-index: 1;
+    }
+    .pay-table th.s3,
+    .pay-table th.s4 {
+        z-index: 2;
+    }
+    .pay-table td.s1,
+    .pay-table td.s2 {
+        z-index: 4;
+    }
+    .pay-table th.s1,
+    .pay-table th.s2 {
+        z-index: 7;
     }
     .pay-table td.dc,
     .pay-table thead tr.h3 th {
@@ -4295,8 +4332,6 @@ if menu == MENU_SUMMARY:
         }
     )
 
-    # Legenda di atas grafik (di luar area batang) dan margin kiri otomatis
-    # (automargin) agar nama dokumen yang panjang tidak terpotong.
     fig_bar.update_layout(
         height=560,
         font=dict(family=PLOT_FONT, color=BRAND_TEXT, size=13),
@@ -4343,8 +4378,6 @@ if menu == MENU_SUMMARY:
 
     fig_bar.update_xaxes(**x_axis_options)
 
-    # Wadah ber-key supaya di HP grafik bisa digeser horizontal (CSS
-    # .st-key-chart_docs di blok RESPONSIF).
     with keyed_container("chart_docs"):
         show_chart(fig_bar)
 
